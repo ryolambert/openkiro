@@ -1,0 +1,25 @@
+# Binary
+kiro-claude-proxy
+kiro-claude-proxy.exe
+openkiro
+openkiro.exe
+
+# Logs
+*.log
+proxy.log
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Ralph orchestrator
+PROMPT.md
+progress.txt
+ralph.yml
+.ralph/
+design.md
+exploration.md
+requirements.md
