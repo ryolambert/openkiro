@@ -102,8 +102,8 @@ func TestBuildCodeWhispererRequestCharacterizationPreservesCallerContext(t *test
 	cwReq := buildCodeWhispererRequest(req)
 	current := cwReq.ConversationState.CurrentMessage.UserInputMessage
 
-	if current.ModelId != modelSonnet46 {
-		t.Fatalf("expected fallback model %q, got %q", modelSonnet46, current.ModelId)
+	if current.ModelId != modelBuilderSonnet45 {
+		t.Fatalf("expected fallback model %q, got %q", modelBuilderSonnet45, current.ModelId)
 	}
 	if !strings.Contains(current.Content, req.System[0].Text) {
 		t.Fatalf("expected current content to include system context, got %q", current.Content)
@@ -169,7 +169,7 @@ func TestHandleStreamRequestCharacterizationTextOnly(t *testing.T) {
 	}
 
 	message := events[0]["data"].(map[string]any)["message"].(map[string]any)
-	if got := message["model"]; got != modelSonnet46 {
+	if got := message["model"]; got != modelBuilderSonnet45 {
 		t.Fatalf("expected streaming response to report resolved model, got %#v", got)
 	}
 	messageDelta := events[5]["data"].(map[string]any)["delta"].(map[string]any)
@@ -210,7 +210,7 @@ func TestHandleNonStreamRequestCharacterizationMixedTextToolKeepsBothBlocks(t *t
 		t.Fatalf("decode non-stream response: %v", err)
 	}
 
-	if got := resp["model"]; got != modelSonnet46 {
+	if got := resp["model"]; got != modelBuilderSonnet45 {
 		t.Fatalf("expected non-stream response to report resolved model, got %#v", got)
 	}
 	if got := resp["stop_reason"]; got != "tool_use" {
@@ -245,7 +245,7 @@ func TestSetClaudeUpdatesClaudeConfig(t *testing.T) {
 	claudeConfigPath := filepath.Join(tempHome, ".claude.json")
 	initial := map[string]any{
 		"hasCompletedOnboarding": false,
-		legacyClaudeConfigKey():   true,
+		legacyClaudeConfigKey():  true,
 		"theme":                  "dark",
 	}
 	data, err := json.Marshal(initial)

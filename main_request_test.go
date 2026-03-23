@@ -43,6 +43,10 @@ func TestBuildCodeWhispererRequestRemovesIdentityForcing(t *testing.T) {
 }
 
 func TestEnsurePayloadFitsTrimsOldestHistoryFirst(t *testing.T) {
+	orig := maxPayloadBytes
+	maxPayloadBytes = 200000 // small limit to trigger trimming in test
+	t.Cleanup(func() { maxPayloadBytes = orig })
+
 	cwReq := CodeWhispererRequest{}
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = "current"
 	cwReq.ConversationState.History = []any{

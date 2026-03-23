@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/alexandeism/kirolink/protocol"
+	"github.com/ryolambert/openkiro/protocol"
 )
 
 func TestAssembleAnthropicResponseMixedTextAndToolUse(t *testing.T) {

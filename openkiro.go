@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"crypto/sha256"
-	"github.com/alexandeism/kirolink/protocol"
+	"github.com/ryolambert/openkiro/protocol"
 )
 
 // TokenData defines the token file structure
@@ -102,7 +102,7 @@ type AnthropicRequest struct {
 	Stream      bool                      `json:"stream"`
 	Temperature *float64                  `json:"temperature,omitempty"`
 	Metadata    map[string]any            `json:"metadata,omitempty"`
-	// KiroLink extensions
+	// openkiro extensions
 	ConversationId *string `json:"conversation_id,omitempty"`
 }
 
@@ -292,7 +292,6 @@ const (
 
 	// Payload safety limits for CodeWhisperer
 	maxToolDescLen       = 200     // max characters per tool description
-	maxPayloadBytes      = 250000  // ~250KB soft limit for total request JSON
 	maxRequestBodyBytes  = 1 << 20 // 1 MiB max inbound request body
 	serverReadTimeout    = 30 * time.Second
 	serverWriteTimeout   = 60 * time.Second
@@ -301,6 +300,8 @@ const (
 	upstreamHTTPTimeout  = 60 * time.Second
 	defaultListenAddress = "127.0.0.1"
 )
+
+var maxPayloadBytes = 250000000 // ~ 250MB soft limit for total request JSON
 
 var ModelMap = map[string]string{
 	"default":                    modelSonnet45,

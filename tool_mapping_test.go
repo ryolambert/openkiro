@@ -42,10 +42,10 @@ func TestBuildCodeWhispererRequest_ToolMapping(t *testing.T) {
 			}},
 			{Role: "user", Content: []interface{}{
 				map[string]interface{}{
-					"type":         "tool_result",
-					"tool_use_id":  "tool-1",
-					"content":      "Result content",
-					"is_error":     false,
+					"type":        "tool_result",
+					"tool_use_id": "tool-1",
+					"content":     "Result content",
+					"is_error":    false,
 				},
 			}},
 		},
