@@ -245,6 +245,7 @@ func TestSetClaudeUpdatesClaudeConfig(t *testing.T) {
 	claudeConfigPath := filepath.Join(tempHome, ".claude.json")
 	initial := map[string]any{
 		"hasCompletedOnboarding": false,
+		"kirolink":               true,
 		legacyClaudeConfigKey():  true,
 		"theme":                  "dark",
 	}
@@ -271,8 +272,11 @@ func TestSetClaudeUpdatesClaudeConfig(t *testing.T) {
 	if got := updated["hasCompletedOnboarding"]; got != true {
 		t.Fatalf("expected hasCompletedOnboarding=true, got %#v", got)
 	}
-	if got := updated["kirolink"]; got != true {
-		t.Fatalf("expected kirolink=true, got %#v", got)
+	if got := updated["openkiro"]; got != true {
+		t.Fatalf("expected openkiro=true, got %#v", got)
+	}
+	if _, ok := updated["kirolink"]; ok {
+		t.Fatalf("expected legacy kirolink key to be removed during config update")
 	}
 	if _, ok := updated[legacyClaudeConfigKey()]; ok {
 		t.Fatalf("expected legacy helper key to be removed during config update")

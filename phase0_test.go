@@ -10,21 +10,29 @@ import (
 )
 
 func TestDebugLoggingEnabledUsesEnv(t *testing.T) {
+	t.Setenv("OPENKIRO_DEBUG", "")
 	t.Setenv("KIROLINK_DEBUG", "")
 	if debugLoggingEnabled() {
 		t.Fatalf("expected debug logging to be disabled by default")
 	}
 
+	t.Setenv("OPENKIRO_DEBUG", "true")
+	if !debugLoggingEnabled() {
+		t.Fatalf("expected debug logging to be enabled when OPENKIRO_DEBUG=true")
+	}
+
+	// Legacy fallback
+	t.Setenv("OPENKIRO_DEBUG", "")
 	t.Setenv("KIROLINK_DEBUG", "true")
 	if !debugLoggingEnabled() {
-		t.Fatalf("expected debug logging to be enabled when KIROLINK_DEBUG=true")
+		t.Fatalf("expected debug logging to be enabled via legacy KIROLINK_DEBUG fallback")
 	}
 }
 
 func TestNewHTTPServerUsesLocalhostOnlyAndTimeouts(t *testing.T) {
-	server := newHTTPServer("8080", http.NewServeMux())
+	server := newHTTPServer("1234", http.NewServeMux())
 
-	if got := server.Addr; got != "127.0.0.1:8080" {
+	if got := server.Addr; got != "127.0.0.1:1234" {
 		t.Fatalf("expected loopback-only listen address, got %q", got)
 	}
 	if got := server.ReadTimeout; got != serverReadTimeout {

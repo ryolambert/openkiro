@@ -814,12 +814,12 @@ func buildCodeWhispererRequest(anthropicReq AnthropicRequest) CodeWhispererReque
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
-		fmt.Println("  kirolink read    - Read and display token")
-		fmt.Println("  kirolink refresh - Refresh token")
-		fmt.Println("  kirolink export  - Export environment variables")
-		fmt.Println("  kirolink claude  - Skip Claude region restrictions")
-		fmt.Println("  kirolink server [port] - Start Anthropic API proxy server")
-		fmt.Println("  author https://github.com/alexandeism/kirolink")
+		fmt.Println("  openkiro read    - Read and display token")
+		fmt.Println("  openkiro refresh - Refresh token")
+		fmt.Println("  openkiro export  - Export environment variables")
+		fmt.Println("  openkiro claude  - Skip Claude region restrictions")
+		fmt.Println("  openkiro server [port] - Start Anthropic API proxy server")
+		fmt.Println("  https://github.com/ryolambert/openkiro")
 		os.Exit(1)
 	}
 
@@ -836,7 +836,7 @@ func main() {
 	case "claude":
 		setClaude()
 	case "server":
-		port := "8080" // Default port
+		port := "1234" // Default port
 		if len(os.Args) > 2 {
 			port = os.Args[2]
 		}
@@ -972,13 +972,13 @@ func exportEnvVars() {
 	// Output env var setup commands in OS-specific formats
 	if runtime.GOOS == "windows" {
 		fmt.Println("CMD")
-		fmt.Printf("set ANTHROPIC_BASE_URL=http://localhost:8080\n")
+		fmt.Printf("set ANTHROPIC_BASE_URL=http://localhost:1234\n")
 		fmt.Printf("set ANTHROPIC_API_KEY=%s\n\n", token.AccessToken)
 		fmt.Println("Powershell")
-		fmt.Println(`$env:ANTHROPIC_BASE_URL="http://localhost:8080"`)
+		fmt.Println(`$env:ANTHROPIC_BASE_URL="http://localhost:1234"`)
 		fmt.Printf(`$env:ANTHROPIC_API_KEY="%s"`, token.AccessToken)
 	} else {
-		fmt.Printf("export ANTHROPIC_BASE_URL=http://localhost:8080\n")
+		fmt.Printf("export ANTHROPIC_BASE_URL=http://localhost:1234\n")
 		fmt.Printf("export ANTHROPIC_API_KEY=\"%s\"\n", token.AccessToken)
 	}
 }
@@ -1019,7 +1019,8 @@ func setClaude() {
 	}
 
 	jsonData["hasCompletedOnboarding"] = true
-	jsonData["kirolink"] = true
+	jsonData["openkiro"] = true
+	delete(jsonData, "kirolink")
 	delete(jsonData, legacyClaudeConfigKey())
 
 	newJson, err := json.MarshalIndent(jsonData, "", "  ")
@@ -1058,12 +1059,17 @@ func getToken() (TokenData, error) {
 }
 
 func debugLoggingEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("KIROLINK_DEBUG"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPENKIRO_DEBUG"))) {
 	case "1", "true", "yes", "on", "debug":
 		return true
-	default:
-		return false
 	}
+	// Legacy fallback
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("KIROLINK_DEBUG"))) {
+	case "1", "true", "yes", "on", "debug":
+		fmt.Fprintln(os.Stderr, "WARNING: KIROLINK_DEBUG is deprecated, use OPENKIRO_DEBUG")
+		return true
+	}
+	return false
 }
 
 func debugLogf(format string, args ...any) {
