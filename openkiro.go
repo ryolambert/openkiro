@@ -302,6 +302,7 @@ const (
 	upstreamHTTPTimeout  = 60 * time.Second
 	defaultListenAddress = "127.0.0.1"
 	defaultPort          = "1234"
+	launchdLabel         = "com.openkiro.proxy"
 )
 
 var maxRequestBodyBytes int64 = 200 << 20 // 200 MiB max inbound request body
@@ -940,6 +941,222 @@ func cleanStalePID() error {
 	return removePID()
 }
 
+// selfPath returns the absolute path to the current binary.
+func selfPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("selfPath: %w", err)
+	}
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", fmt.Errorf("selfPath: %w", err)
+	}
+	return real, nil
+}
+
+// launchdPlistPath returns the path to the launchd plist file.
+func launchdPlistPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("launchdPlistPath: %w", err)
+	}
+	return filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist"), nil
+}
+
+// generatePlist returns a launchd plist XML for the proxy.
+func generatePlist(binaryPath, port, logPath string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>%s</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>%s</string>
+		<string>server</string>
+		<string>--port</string>
+		<string>%s</string>
+	</array>
+	<key>StandardOutPath</key>
+	<string>%s</string>
+	<key>StandardErrorPath</key>
+	<string>%s</string>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>
+`, launchdLabel, binaryPath, port, logPath, logPath)
+}
+
+// parsePortFlag extracts --port value from os.Args[2:].
+func parsePortFlag() string {
+	for i := 2; i < len(os.Args); i++ {
+		if os.Args[i] == "--port" && i+1 < len(os.Args) {
+			return os.Args[i+1]
+		}
+	}
+	return ""
+}
+
+func cmdStart() {
+	if err := cleanStalePID(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	port, err := resolvePort(parsePortFlag())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	bin, err := selfPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	logP, err := logFilePath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		plistPath, err := launchdPlistPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		content := generatePlist(bin, port, logP)
+		if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "mkdir LaunchAgents: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(plistPath, []byte(content), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "write plist: %v\n", err)
+			os.Exit(1)
+		}
+		out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "launchctl load: %s: %v\n", strings.TrimSpace(string(out)), err)
+			os.Exit(1)
+		}
+		fmt.Printf("openkiro started (launchd) on port %s\n", port)
+
+	case "linux":
+		cmd := exec.Command(bin, "server", "--port", port)
+		logFile, err := os.OpenFile(logP, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open log: %v\n", err)
+			os.Exit(1)
+		}
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		if err := cmd.Start(); err != nil {
+			logFile.Close()
+			fmt.Fprintf(os.Stderr, "start: %v\n", err)
+			os.Exit(1)
+		}
+		logFile.Close()
+		if err := writePID(cmd.Process.Pid); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("openkiro started (PID %d) on port %s\n", cmd.Process.Pid, port)
+
+	default:
+		fmt.Fprintf(os.Stderr, "start: use 'openkiro server' directly on %s (or wait for Windows Service support)\n", runtime.GOOS)
+		os.Exit(1)
+	}
+}
+
+func cmdStop() {
+	switch runtime.GOOS {
+	case "darwin":
+		plistPath, err := launchdPlistPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		out, err := exec.Command("launchctl", "unload", plistPath).CombinedOutput()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "launchctl unload: %s: %v\n", strings.TrimSpace(string(out)), err)
+		}
+		_ = os.Remove(plistPath)
+		_ = removePID()
+		fmt.Println("openkiro stopped (launchd)")
+
+	case "linux":
+		pid, err := readPID()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read PID: %v\n", err)
+			os.Exit(1)
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "find process %d: %v\n", pid, err)
+			os.Exit(1)
+		}
+		if err := proc.Signal(syscall.Signal(0xf)); err != nil { // SIGTERM
+			fmt.Fprintf(os.Stderr, "signal %d: %v\n", pid, err)
+		}
+		_ = removePID()
+		fmt.Printf("openkiro stopped (PID %d)\n", pid)
+
+	default:
+		fmt.Fprintf(os.Stderr, "stop: not supported on %s\n", runtime.GOOS)
+		os.Exit(1)
+	}
+}
+
+func cmdStatus() {
+	switch runtime.GOOS {
+	case "darwin":
+		out, err := exec.Command("launchctl", "list", launchdLabel).CombinedOutput()
+		if err != nil {
+			fmt.Println("openkiro: not running")
+			return
+		}
+		// Parse PID from launchctl output (first column of second line)
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		pidStr := "-"
+		if len(lines) > 1 {
+			fields := strings.Fields(lines[1])
+			if len(fields) > 0 && fields[0] != "-" {
+				pidStr = fields[0]
+			}
+		}
+		port := defaultPort
+		if p := os.Getenv("OPENKIRO_PORT"); p != "" {
+			port = p
+		}
+		fmt.Printf("openkiro: running (PID %s, port %s)\n", pidStr, port)
+
+	case "linux":
+		pid, err := readPID()
+		if err != nil {
+			fmt.Println("openkiro: not running")
+			return
+		}
+		if !isRunning(pid) {
+			_ = removePID()
+			fmt.Println("openkiro: not running (stale PID removed)")
+			return
+		}
+		port := defaultPort
+		if p := os.Getenv("OPENKIRO_PORT"); p != "" {
+			port = p
+		}
+		fmt.Printf("openkiro: running (PID %d, port %s)\n", pid, port)
+
+	default:
+		fmt.Fprintf(os.Stderr, "status: not supported on %s\n", runtime.GOOS)
+		os.Exit(1)
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
@@ -948,6 +1165,9 @@ func main() {
 		fmt.Println("  openkiro export  - Export environment variables")
 		fmt.Println("  openkiro claude  - Skip Claude region restrictions")
 		fmt.Println("  openkiro server [port] - Start Anthropic API proxy server")
+		fmt.Println("  openkiro start   - Start background proxy")
+		fmt.Println("  openkiro stop    - Stop background proxy")
+		fmt.Println("  openkiro status  - Show proxy status")
 		fmt.Println("  https://github.com/ryolambert/openkiro")
 		os.Exit(1)
 	}
@@ -997,6 +1217,12 @@ func main() {
 			os.Exit(1)
 		}
 		startServer(listenAddr, port)
+	case "start":
+		cmdStart()
+	case "stop":
+		cmdStop()
+	case "status":
+		cmdStatus()
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		os.Exit(1)

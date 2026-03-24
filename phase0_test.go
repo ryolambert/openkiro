@@ -564,3 +564,66 @@ func TestCleanStalePIDRunning(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestSelfPath(t *testing.T) {
+	p, err := selfPath()
+	if err != nil {
+		t.Fatalf("selfPath: %v", err)
+	}
+	if p == "" {
+		t.Fatal("selfPath returned empty")
+	}
+	if !filepath.IsAbs(p) {
+		t.Errorf("selfPath not absolute: %s", p)
+	}
+}
+
+func TestLaunchdPlistPath(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin only")
+	}
+	p, err := launchdPlistPath()
+	if err != nil {
+		t.Fatalf("launchdPlistPath: %v", err)
+	}
+	if filepath.Base(p) != "com.openkiro.proxy.plist" {
+		t.Errorf("unexpected basename: %s", filepath.Base(p))
+	}
+	if !strings.Contains(p, "LaunchAgents") {
+		t.Errorf("expected LaunchAgents in path: %s", p)
+	}
+}
+
+func TestGeneratePlist(t *testing.T) {
+	xml := generatePlist("/usr/local/bin/openkiro", "1234", "/tmp/openkiro.log")
+	checks := []string{
+		"com.openkiro.proxy",
+		"/usr/local/bin/openkiro",
+		"1234",
+		"/tmp/openkiro.log",
+		"<key>KeepAlive</key>",
+		"<true/>",
+		"<key>RunAtLoad</key>",
+		"<false/>",
+	}
+	for _, c := range checks {
+		if !strings.Contains(xml, c) {
+			t.Errorf("plist missing %q", c)
+		}
+	}
+}
+
+func TestParsePortFlag(t *testing.T) {
+	orig := os.Args
+	t.Cleanup(func() { os.Args = orig })
+
+	os.Args = []string{"openkiro", "start", "--port", "5678"}
+	if got := parsePortFlag(); got != "5678" {
+		t.Errorf("parsePortFlag = %q, want 5678", got)
+	}
+
+	os.Args = []string{"openkiro", "start"}
+	if got := parsePortFlag(); got != "" {
+		t.Errorf("parsePortFlag = %q, want empty", got)
+	}
+}
