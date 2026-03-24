@@ -1301,8 +1301,13 @@ func newProxyHandler() http.Handler {
 			Data   []ModelEntry `json:"data"`
 		}
 
-		var data []ModelEntry
+		keys := make([]string, 0, len(ModelMap))
 		for k := range ModelMap {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		data := make([]ModelEntry, 0, len(keys))
+		for _, k := range keys {
 			data = append(data, ModelEntry{
 				ID:      k,
 				Object:  "model",

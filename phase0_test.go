@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -319,5 +320,45 @@ func TestGetUpstreamClientSingleton(t *testing.T) {
 	}
 	if c1.Timeout != upstreamHTTPTimeout {
 		t.Errorf("Timeout=%v, want %v", c1.Timeout, upstreamHTTPTimeout)
+	}
+}
+
+func TestModelsEndpointDeterministic(t *testing.T) {
+	mux := newProxyHandler()
+	type ModelsResponse struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+
+	var firstIDs []string
+	for i := 0; i < 10; i++ {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/models", nil))
+		if rec.Code != 200 {
+			t.Fatalf("iteration %d: status=%d", i, rec.Code)
+		}
+		var resp ModelsResponse
+		if err := jsonStr.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("iteration %d: decode: %v", i, err)
+		}
+		ids := make([]string, len(resp.Data))
+		for j, m := range resp.Data {
+			ids[j] = m.ID
+		}
+		if i == 0 {
+			firstIDs = ids
+			if !sort.StringsAreSorted(ids) {
+				t.Fatalf("model IDs not sorted: %v", ids)
+			}
+		} else if len(ids) != len(firstIDs) {
+			t.Fatalf("iteration %d: got %d models, want %d", i, len(ids), len(firstIDs))
+		} else {
+			for j := range ids {
+				if ids[j] != firstIDs[j] {
+					t.Fatalf("iteration %d: order differs at index %d: got %q, want %q", i, j, ids[j], firstIDs[j])
+				}
+			}
+		}
 	}
 }
