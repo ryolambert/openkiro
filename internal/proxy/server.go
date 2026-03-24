@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,8 +176,8 @@ func NewProxyHandler() http.Handler {
 	return mux
 }
 
-// StartServer starts the HTTP proxy server.
-func StartServer(listenAddr, port string) {
+// StartServer starts the HTTP proxy server. Blocks until ctx is cancelled or a fatal error occurs.
+func StartServer(ctx context.Context, listenAddr, port string) {
 	protocol.Debug = token.DebugLoggingEnabled()
 	if listenAddr != DefaultListenAddress {
 		log.Printf("WARNING: listening on %s — server is accessible from the network", listenAddr)
@@ -190,7 +191,16 @@ func StartServer(listenAddr, port string) {
 	log.Printf("  GET  /health      - Health check")
 	log.Printf("Press Ctrl+C to stop the server")
 
-	if err := server.ListenAndServe(); err != nil {
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutCtx); err != nil {
+			log.Printf("shutdown error: %v", err)
+		}
+	}()
+
+	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("Failed to start server: %v", err)
 		os.Exit(1)
 	}
