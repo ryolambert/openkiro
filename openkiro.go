@@ -831,6 +831,54 @@ func resolvePort(flagValue string) (string, error) {
 	return port, nil
 }
 
+// logDir returns the platform-appropriate log directory for openkiro.
+// Creates the directory if it does not exist.
+func logDir() (string, error) {
+	var dir string
+	switch runtime.GOOS {
+	case "darwin":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("logDir: %w", err)
+		}
+		dir = filepath.Join(home, "Library", "Logs", "openkiro")
+	case "windows":
+		local := os.Getenv("LOCALAPPDATA")
+		if local == "" {
+			return "", fmt.Errorf("logDir: LOCALAPPDATA not set")
+		}
+		dir = filepath.Join(local, "openkiro", "logs")
+	default: // linux and others
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("logDir: %w", err)
+		}
+		dir = filepath.Join(home, ".local", "state", "openkiro")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("logDir: mkdir %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// pidFilePath returns the path to the PID file.
+func pidFilePath() (string, error) {
+	dir, err := logDir()
+	if err != nil {
+		return "", fmt.Errorf("pidFilePath: %w", err)
+	}
+	return filepath.Join(dir, "openkiro.pid"), nil
+}
+
+// logFilePath returns the path to the log file.
+func logFilePath() (string, error) {
+	dir, err := logDir()
+	if err != nil {
+		return "", fmt.Errorf("logFilePath: %w", err)
+	}
+	return filepath.Join(dir, "openkiro.log"), nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")

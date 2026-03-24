@@ -404,3 +404,78 @@ func TestResolvePort(t *testing.T) {
 		})
 	}
 }
+
+func TestLogDir(t *testing.T) {
+	dir, err := logDir()
+	if err != nil {
+		t.Fatalf("logDir() error: %v", err)
+	}
+	if dir == "" {
+		t.Fatal("logDir() returned empty string")
+	}
+	if !filepath.IsAbs(dir) {
+		t.Errorf("logDir() returned relative path: %s", dir)
+	}
+	// Verify platform-specific path component
+	switch runtime.GOOS {
+	case "darwin":
+		if !contains(dir, filepath.Join("Library", "Logs", "openkiro")) {
+			t.Errorf("darwin: expected Library/Logs/openkiro in %s", dir)
+		}
+	case "windows":
+		if !contains(dir, filepath.Join("openkiro", "logs")) {
+			t.Errorf("windows: expected openkiro\\logs in %s", dir)
+		}
+	default:
+		if !contains(dir, filepath.Join(".local", "state", "openkiro")) {
+			t.Errorf("linux: expected .local/state/openkiro in %s", dir)
+		}
+	}
+	// Verify directory was created
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("logDir() directory not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("logDir() path is not a directory: %s", dir)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPidFilePath(t *testing.T) {
+	p, err := pidFilePath()
+	if err != nil {
+		t.Fatalf("pidFilePath() error: %v", err)
+	}
+	if filepath.Base(p) != "openkiro.pid" {
+		t.Errorf("pidFilePath() base = %q, want openkiro.pid", filepath.Base(p))
+	}
+	if !filepath.IsAbs(p) {
+		t.Errorf("pidFilePath() returned relative path: %s", p)
+	}
+}
+
+func TestLogFilePath(t *testing.T) {
+	p, err := logFilePath()
+	if err != nil {
+		t.Fatalf("logFilePath() error: %v", err)
+	}
+	if filepath.Base(p) != "openkiro.log" {
+		t.Errorf("logFilePath() base = %q, want openkiro.log", filepath.Base(p))
+	}
+	if !filepath.IsAbs(p) {
+		t.Errorf("logFilePath() returned relative path: %s", p)
+	}
+}
