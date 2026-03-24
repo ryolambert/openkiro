@@ -362,3 +362,45 @@ func TestModelsEndpointDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestResolvePort(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    string
+		env     string
+		want    string
+		wantErr bool
+	}{
+		{"default", "", "", "1234", false},
+		{"flag wins", "5678", "", "5678", false},
+		{"env wins over default", "", "9999", "9999", false},
+		{"flag wins over env", "5678", "9999", "5678", false},
+		{"invalid non-numeric", "abc", "", "", true},
+		{"port zero", "0", "", "", true},
+		{"port too high", "70000", "", "", true},
+		{"valid boundary low", "1", "", "1", false},
+		{"valid boundary high", "65535", "", "65535", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.env != "" {
+				t.Setenv("OPENKIRO_PORT", tt.env)
+			} else {
+				t.Setenv("OPENKIRO_PORT", "")
+			}
+			got, err := resolvePort(tt.flag)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for flag=%q env=%q, got %q", tt.flag, tt.env, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

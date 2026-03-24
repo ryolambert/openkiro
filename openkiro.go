@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -299,6 +300,7 @@ const (
 	serverHeaderTimeout  = 10 * time.Second
 	upstreamHTTPTimeout  = 60 * time.Second
 	defaultListenAddress = "127.0.0.1"
+	defaultPort          = "1234"
 )
 
 var maxRequestBodyBytes int64 = 200 << 20 // 200 MiB max inbound request body
@@ -813,6 +815,22 @@ func buildCodeWhispererRequest(anthropicReq AnthropicRequest) CodeWhispererReque
 	return cwReq
 }
 
+// resolvePort returns the port to use: flag > env > default.
+// Returns an error if the value is not a valid port number.
+func resolvePort(flagValue string) (string, error) {
+	port := defaultPort
+	if flagValue != "" {
+		port = flagValue
+	} else if envPort := os.Getenv("OPENKIRO_PORT"); envPort != "" {
+		port = envPort
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("invalid port %q: must be 1-65535", port)
+	}
+	return port, nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
@@ -833,12 +851,24 @@ func main() {
 	case "refresh":
 		refreshToken()
 	case "export":
-		exportEnvVars()
+		var flagPort string
+		for i := 2; i < len(os.Args); i++ {
+			if os.Args[i] == "--port" && i+1 < len(os.Args) {
+				flagPort = os.Args[i+1]
+				i++
+			}
+		}
+		port, err := resolvePort(flagPort)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		exportEnvVars(port)
 
 	case "claude":
 		setClaude()
 	case "server":
-		port := "1234" // Default port
+		var flagPort string
 		listenAddr := defaultListenAddress
 		for i := 2; i < len(os.Args); i++ {
 			switch {
@@ -846,14 +876,16 @@ func main() {
 				listenAddr = os.Args[i+1]
 				i++
 			case os.Args[i] == "--port" && i+1 < len(os.Args):
-				port = os.Args[i+1]
+				flagPort = os.Args[i+1]
 				i++
 			case !strings.HasPrefix(os.Args[i], "--"):
-				port = os.Args[i] // backward compat: positional port
+				flagPort = os.Args[i] // backward compat: positional port
 			}
 		}
-		if envPort := os.Getenv("OPENKIRO_PORT"); envPort != "" && port == "1234" {
-			port = envPort
+		port, err := resolvePort(flagPort)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
 		}
 		startServer(listenAddr, port)
 	default:
@@ -986,7 +1018,7 @@ func getProfileArn() string {
 }
 
 // exportEnvVars exports environment variables
-func exportEnvVars() {
+func exportEnvVars(port string) {
 	tokenPath := getTokenFilePath()
 
 	data, err := os.ReadFile(tokenPath)
@@ -1001,16 +1033,18 @@ func exportEnvVars() {
 		os.Exit(1)
 	}
 
+	baseURL := fmt.Sprintf("http://localhost:%s", port)
+
 	// Output env var setup commands in OS-specific formats
 	if runtime.GOOS == "windows" {
 		fmt.Println("CMD")
-		fmt.Printf("set ANTHROPIC_BASE_URL=http://localhost:1234\n")
+		fmt.Printf("set ANTHROPIC_BASE_URL=%s\n", baseURL)
 		fmt.Printf("set ANTHROPIC_API_KEY=%s\n\n", token.AccessToken)
 		fmt.Println("Powershell")
-		fmt.Println(`$env:ANTHROPIC_BASE_URL="http://localhost:1234"`)
+		fmt.Printf("$env:ANTHROPIC_BASE_URL=\"%s\"\n", baseURL)
 		fmt.Printf(`$env:ANTHROPIC_API_KEY="%s"`, token.AccessToken)
 	} else {
-		fmt.Printf("export ANTHROPIC_BASE_URL=http://localhost:1234\n")
+		fmt.Printf("export ANTHROPIC_BASE_URL=%s\n", baseURL)
 		fmt.Printf("export ANTHROPIC_API_KEY=\"%s\"\n", token.AccessToken)
 	}
 }
