@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"crypto/sha256"
@@ -877,6 +878,66 @@ func logFilePath() (string, error) {
 		return "", fmt.Errorf("logFilePath: %w", err)
 	}
 	return filepath.Join(dir, "openkiro.log"), nil
+}
+
+func writePID(pid int) error {
+	p, err := pidFilePath()
+	if err != nil {
+		return fmt.Errorf("writePID: %w", err)
+	}
+	if err := os.WriteFile(p, []byte(strconv.Itoa(pid)), 0o644); err != nil {
+		return fmt.Errorf("writePID: %w", err)
+	}
+	return nil
+}
+
+func readPID() (int, error) {
+	p, err := pidFilePath()
+	if err != nil {
+		return 0, fmt.Errorf("readPID: %w", err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return 0, fmt.Errorf("readPID: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("readPID: invalid pid: %w", err)
+	}
+	return pid, nil
+}
+
+func removePID() error {
+	p, err := pidFilePath()
+	if err != nil {
+		return fmt.Errorf("removePID: %w", err)
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("removePID: %w", err)
+	}
+	return nil
+}
+
+func isRunning(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+func cleanStalePID() error {
+	pid, err := readPID()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("cleanStalePID: %w", err)
+	}
+	if isRunning(pid) {
+		return fmt.Errorf("cleanStalePID: already running with PID %d", pid)
+	}
+	return removePID()
 }
 
 func main() {

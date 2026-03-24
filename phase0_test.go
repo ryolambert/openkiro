@@ -479,3 +479,88 @@ func TestLogFilePath(t *testing.T) {
 		t.Errorf("logFilePath() returned relative path: %s", p)
 	}
 }
+
+func TestWriteAndReadPID(t *testing.T) {
+	pid := os.Getpid()
+	if err := writePID(pid); err != nil {
+		t.Fatalf("writePID: %v", err)
+	}
+	t.Cleanup(func() { removePID() })
+
+	got, err := readPID()
+	if err != nil {
+		t.Fatalf("readPID: %v", err)
+	}
+	if got != pid {
+		t.Errorf("readPID() = %d, want %d", got, pid)
+	}
+}
+
+func TestRemovePID(t *testing.T) {
+	if err := writePID(12345); err != nil {
+		t.Fatalf("writePID: %v", err)
+	}
+	if err := removePID(); err != nil {
+		t.Fatalf("removePID: %v", err)
+	}
+	p, _ := pidFilePath()
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("PID file still exists after removePID")
+	}
+}
+
+func TestRemovePIDNonExistent(t *testing.T) {
+	// Ensure no PID file exists
+	removePID()
+	if err := removePID(); err != nil {
+		t.Errorf("removePID on non-existent file: %v", err)
+	}
+}
+
+func TestIsRunning(t *testing.T) {
+	tests := []struct {
+		name string
+		pid  int
+		want bool
+	}{
+		{"own process", os.Getpid(), true},
+		{"bogus PID", 99999999, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRunning(tt.pid); got != tt.want {
+				t.Errorf("isRunning(%d) = %v, want %v", tt.pid, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCleanStalePID(t *testing.T) {
+	// Write a fake PID that isn't running
+	if err := writePID(99999999); err != nil {
+		t.Fatalf("writePID: %v", err)
+	}
+	if err := cleanStalePID(); err != nil {
+		t.Fatalf("cleanStalePID: %v", err)
+	}
+	p, _ := pidFilePath()
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("stale PID file not cleaned up")
+	}
+}
+
+func TestCleanStalePIDRunning(t *testing.T) {
+	// Write our own PID — should report "already running"
+	if err := writePID(os.Getpid()); err != nil {
+		t.Fatalf("writePID: %v", err)
+	}
+	t.Cleanup(func() { removePID() })
+
+	err := cleanStalePID()
+	if err == nil {
+		t.Fatal("cleanStalePID should error when process is running")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
