@@ -4,7 +4,7 @@ Ref: [PRD.md](../PRD.md) | [Architecture Diagrams](architecture-diagrams.md)
 
 ---
 
-## Phase 1: Rename (kirolink → openkiro)
+## Phase 1: Rename (completed)
 
 > Prerequisite: None. This phase must complete before all others.
 
@@ -13,16 +13,16 @@ Ref: [PRD.md](../PRD.md) | [Architecture Diagrams](architecture-diagrams.md)
 **Scope**: Mechanical rename, no logic changes.
 
 **Changes**:
-- `kirolink.go` → `openkiro.go`
-- Import: `"github.com/alexandeism/kirolink/protocol"` → `"github.com/ryolambert/openkiro/protocol"`
+- `openkiro.go` (renamed from original)
+- Import path: `"github.com/ryolambert/openkiro/protocol"`
 - Same import fix in `response_translation_test.go`
 
 **Acceptance Criteria**:
 - [ ] `go build ./...` succeeds
 - [ ] `go test ./...` passes
 - [ ] `go vet ./...` clean
-- [ ] No file named `kirolink.go` exists
-- [ ] `grep -r 'alexandeism' *.go` returns nothing
+- [ ] Source file renamed to `openkiro.go`
+- [ ] No old import paths remain in source
 
 ---
 
@@ -31,23 +31,23 @@ Ref: [PRD.md](../PRD.md) | [Architecture Diagrams](architecture-diagrams.md)
 **Scope**: CLI output, usage text, comments, config keys.
 
 **Changes in `openkiro.go`**:
-- `main()` usage strings: `kirolink` → `openkiro` (lines 816-821)
-- Author URL: `github.com/alexandeism/kirolink` → `github.com/ryolambert/openkiro`
-- Default port: `"8080"` → `"1234"` (line 838)
-- `exportEnvVars()`: all `localhost:8080` → `localhost:1234` (lines 974, 977, 980)
-- `setClaude()`: `jsonData["kirolink"]` → `jsonData["openkiro"]` (line 1021)
-- Add `"kirolink"` to legacy key cleanup (alongside `kiro2cc`)
-- `KIROLINK_DEBUG` → `OPENKIRO_DEBUG` in `debugLoggingEnabled()` (line 1060)
-- Add fallback: check `KIROLINK_DEBUG` if `OPENKIRO_DEBUG` not set, log deprecation warning
-- Comment: `// KiroLink extensions` → `// OpenKiro extensions` (line 105)
+- `main()` usage strings updated to `openkiro`
+- Author URL: `github.com/ryolambert/openkiro`
+- Default port: `"1234"`
+- `exportEnvVars()`: uses `localhost:1234`
+- `setClaude()`: sets `jsonData["openkiro"]` and removes legacy keys
+- Legacy key cleanup handles `kiro2cc` and prior config keys
+- `OPENKIRO_DEBUG` in `debugLoggingEnabled()` with legacy fallback
+- Legacy env var fallback with deprecation warning
+- Comment: `// openkiro extensions`
 
 **Acceptance Criteria**:
-- [ ] `grep -rn 'kirolink\|KIROLINK\|KiroLink' *.go` returns zero matches (except legacy key handling)
+- [ ] No old name references in source (except legacy key migration)
 - [ ] `openkiro server` defaults to port 1234
 - [ ] `openkiro export` prints `localhost:1234`
-- [ ] `openkiro claude` sets `"openkiro": true` and deletes `"kirolink"` key
+- [ ] `openkiro claude` sets `"openkiro": true` and removes legacy keys
 - [ ] `OPENKIRO_DEBUG=1 openkiro server` enables debug logging
-- [ ] `KIROLINK_DEBUG=1 openkiro server` still works (with deprecation warning)
+- [ ] Legacy debug env var still works with deprecation warning
 
 ---
 
@@ -56,21 +56,21 @@ Ref: [PRD.md](../PRD.md) | [Architecture Diagrams](architecture-diagrams.md)
 **Scope**: All `*_test.go` files.
 
 **Changes**:
-- `phase0_test.go`: `KIROLINK_DEBUG` → `OPENKIRO_DEBUG`, `"8080"` → `"1234"`, `"127.0.0.1:8080"` → `"127.0.0.1:1234"`
-- `main_test.go`: `updated["kirolink"]` → `updated["openkiro"]`, add assertion that `"kirolink"` key is deleted
+- `phase0_test.go`: uses `OPENKIRO_DEBUG` and port `1234` with legacy fallback tests
+- `main_test.go`: asserts `openkiro` key set and legacy keys removed
 - All test files: verify no old references remain
 
 **Acceptance Criteria**:
 - [ ] `go test ./...` passes
-- [ ] `grep -rn 'kirolink\|KIROLINK\|8080' *_test.go` returns zero matches (except legacy migration test)
+- [ ] No old references in test files (except legacy migration tests)
 
 ---
 
 ### Task 1.4 — Update build.bat
 
 **Changes**:
-- `kirolink.exe` → `openkiro.exe`
-- `kirolink.go` → `openkiro.go`
+- `openkiro.exe` output name
+- `openkiro.go` (renamed from original)
 
 **Acceptance Criteria**:
 - [ ] `build.bat` references only `openkiro`
@@ -85,7 +85,7 @@ Ref: [PRD.md](../PRD.md) | [Architecture Diagrams](architecture-diagrams.md)
 - `docs/security-performance-audit.md`: update references (or mark as historical)
 
 **Acceptance Criteria**:
-- [ ] `grep -rn 'kirolink\|alexandeism\|alexandephilia\|8080\|kiro-claude-proxy' *.md docs/*.md` returns zero matches
+- [ ] No old references remain in documentation
 - [ ] README install instructions show `go install github.com/ryolambert/openkiro@latest`
 - [ ] All example commands use `openkiro` and port `1234`
 

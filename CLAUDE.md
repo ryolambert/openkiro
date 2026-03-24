@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Go CLI tool called `kirolink` that manages Kiro authentication tokens and provides an Anthropic API proxy service. The tool acts as a bridge between Anthropic API requests and AWS CodeWhisperer, translating requests and responses between the two formats.
+This is a Go CLI tool called `openkiro` that manages Kiro authentication tokens and provides an Anthropic API proxy service. The tool acts as a bridge between Anthropic API requests and AWS CodeWhisperer, translating requests and responses between the two formats.
 
 ## Build and Development Commands
 
 ```bash
 # Build the application
-go build -o kirolink kirolink.go
+go build -o openkiro openkiro.go
 
 # Run tests
 go test ./...
@@ -19,31 +19,31 @@ go test ./...
 go test ./protocol -v
 
 # Run the application
-./kirolink [command]
+./openkiro [command]
 ```
 
 ## Application Commands
 
-- `./kirolink read` - Read and display token information
-- `./kirolink refresh` - Refresh the access token using refresh token
-- `./kirolink export` - Export environment variables for other tools
-- `./kirolink server [port]` - Start HTTP proxy server (default port 8080)
+- `./openkiro read` - Read and display token information
+- `./openkiro refresh` - Refresh the access token using refresh token
+- `./openkiro export` - Export environment variables for other tools
+- `./openkiro server [port]` - Start HTTP proxy server (default port 1234)
 
 ## Architecture
 
 ### Core Components
 
-1. **Token Management** (`kirolink.go`)
+1. **Token Management** (`openkiro.go`)
    - Reads tokens from `~/.aws/sso/cache/kiro-auth-token.json`
    - Handles token refresh via Kiro auth service
    - Cross-platform environment variable export
 
-2. **API Translation** (`kirolink.go`)
+2. **API Translation** (`openkiro.go`)
    - Converts Anthropic API requests to CodeWhisperer format
    - Maps model names via `ModelMap` (line 218-221)
    - Handles conversation history and system messages
 
-3. **HTTP Proxy Server** (`kirolink.go`)
+3. **HTTP Proxy Server** (`openkiro.go`)
    - Serves on `/v1/messages` endpoint
    - Supports both streaming and non-streaming requests
    - Automatic token refresh on 403 errors

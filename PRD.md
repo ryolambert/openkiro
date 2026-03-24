@@ -8,7 +8,7 @@ Author: Architecture Review
 
 ## 1. Problem Statement
 
-The project was forked from `alexandephilia/kiro-claude-proxy` (aka `kirolink`). The codebase still references the old name, old author, old import paths, and uses port 8080 which conflicts with common dev tools. Users must manually build from source, keep a terminal open to run the proxy, and configure shell paths themselves.
+The project was forked from an earlier proxy tool. The codebase has been renamed to `openkiro` with updated import paths and port 1234 as the default. Users must manually build from source, keep a terminal open to run the proxy, and configure shell paths themselves.
 
 **Goal**: Ship `openkiro` as a single `go install`-able binary with cross-platform install scripts, a non-conflicting default port, and the ability to run as a background service without a terminal window.
 
@@ -26,20 +26,20 @@ The project was forked from `alexandephilia/kiro-claude-proxy` (aka `kirolink`).
 
 ## 3. Requirements
 
-### 3.1 Rename (kirolink → openkiro)
+### 3.1 Rename (completed)
 
 | ID | Requirement | Priority |
 |---|---|---|
-| R1.1 | Rename main source file: `kirolink.go` → `openkiro.go` | P0 |
-| R1.2 | Fix import path: `github.com/alexandeism/kirolink/protocol` → `github.com/ryolambert/openkiro/protocol` | P0 |
-| R1.3 | Replace all `kirolink` references in CLI output, usage strings, comments | P0 |
+| R1.1 | Main source file: `openkiro.go` | P0 |
+| R1.2 | Import path: `github.com/ryolambert/openkiro/protocol` | P0 |
+| R1.3 | All CLI output, usage strings, comments use `openkiro` | P0 |
 | R1.4 | Rename env var: `KIROLINK_DEBUG` → `OPENKIRO_DEBUG` | P0 |
-| R1.5 | Rename claude.json config key: `"kirolink"` → `"openkiro"` | P0 |
-| R1.6 | Add `"kirolink"` as a legacy key to clean up (alongside existing `kiro2cc`) | P0 |
+| R1.5 | claude.json config key: `"openkiro"` | P0 |
+| R1.6 | Legacy keys cleaned up (alongside existing `kiro2cc`) | P0 |
 | R1.7 | Update `build.bat` to produce `openkiro.exe` | P0 |
 | R1.8 | Update all test files to reference new names/env vars | P0 |
 | R1.9 | Update README.md, CLAUDE.md, docs/ with new name, new repo URL, new author | P0 |
-| R1.10 | Remove/replace all `alexandeism`, `alexandephilia`, `kiro-claude-proxy` references | P0 |
+| R1.10 | All old author and project name references removed | P0 |
 
 ### 3.2 `go install` Support
 
@@ -65,7 +65,7 @@ The project was forked from `alexandephilia/kiro-claude-proxy` (aka `kirolink`).
 
 | ID | Requirement | Priority |
 |---|---|---|
-| R4.1 | Default port changes from `8080` to `1234` | P0 |
+| R4.1 | Default port: `1234` | P0 |
 | R4.2 | Port configurable via CLI: `openkiro server --port 5678` | P0 |
 | R4.3 | Port configurable via env var: `OPENKIRO_PORT=5678` | P0 |
 | R4.4 | CLI flag takes precedence over env var, env var over default | P0 |
@@ -107,7 +107,7 @@ The project was forked from `alexandephilia/kiro-claude-proxy` (aka `kirolink`).
 
 ```
 openkiro/
-├── openkiro.go          # main package (renamed from kirolink.go)
+├── openkiro.go          # main package
 ├── *_test.go            # all test files
 ├── protocol/
 │   ├── sse_parser.go
@@ -168,10 +168,10 @@ The `export` command must read the same precedence chain so `ANTHROPIC_BASE_URL`
 
 | Old | New | Migration |
 |---|---|---|
-| `kirolink` binary | `openkiro` binary | Install script replaces; old binary is orphaned |
-| Port 8080 | Port 1234 | Breaking change — documented in README |
+| Previous binary | `openkiro` binary | Install script replaces; old binary is orphaned |
+| Previous port | Port 1234 | Breaking change — documented in README |
 | `KIROLINK_DEBUG` | `OPENKIRO_DEBUG` | Code checks both, prefers new, warns on old |
-| `"kirolink"` in claude.json | `"openkiro"` in claude.json | `claude` command migrates: sets new key, deletes old |
+| Legacy config key | `"openkiro"` in claude.json | `claude` command migrates: sets new key, deletes old |
 | `"kiro2cc"` in claude.json | deleted | Already handled by `legacyClaudeConfigKey()` |
 
 ### 4.6 Windows Service Approach
@@ -251,7 +251,7 @@ Current codebase has zero external Go dependencies. Adding `golang.org/x/sys` is
 | Windows Service requires admin to install | High | Users can't self-serve | Document; `start` command detects and prompts for elevation |
 | Port 1234 conflicts with something obscure | Low | User confusion | `--port` flag; document in README |
 | `golang.org/x/sys` version drift | Low | Build breaks | Pin version in go.sum; dependabot |
-| Existing kirolink users lose config | Medium | Broken setup | `claude` command migrates keys; README migration section |
+| Existing users lose config | Medium | Broken setup | `claude` command migrates keys; README migration section |
 | launchd plist survives across upgrades | Medium | Stale binary path | `start` command regenerates plist each time |
 
 ---
@@ -264,4 +264,4 @@ Current codebase has zero external Go dependencies. Adding `golang.org/x/sys` is
 4. `openkiro stop` cleanly shuts it down
 5. Install scripts work on a clean macOS (bash+zsh) and Windows (PowerShell) machine
 6. All existing tests pass after rename
-7. Zero references to `kirolink`, `alexandeism`, or `8080` remain in code
+7. Zero references to old project names or old port remain in code

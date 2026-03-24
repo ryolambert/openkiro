@@ -4,7 +4,7 @@ Date: 2026-03-23
 
 ## Scope
 
-This report audits the `kirolink` proxy — a Go single-binary that reads Kiro auth tokens from the local filesystem, proxies Anthropic-compatible API requests, and translates them for the CodeWhisperer backend. The audit covers security, performance, Windows/macOS/Linux readiness, and the work needed to ship a production-grade package.
+This report audits the `openkiro` proxy — a Go single-binary that reads Kiro auth tokens from the local filesystem, proxies Anthropic-compatible API requests, and translates them for the CodeWhisperer backend. The audit covers security, performance, Windows/macOS/Linux readiness, and the work needed to ship a production-grade package.
 
 Commands: `read`, `refresh`, `export`, `claude`, `server`
 Token source: `~/.aws/sso/cache/kiro-auth-token.json`
@@ -16,13 +16,13 @@ Core flow: local token → Anthropic-shaped request in → CodeWhisperer request
 
 **Status: not production-ready for Kiro-IDE-only Windows users.**
 
-The basic proxy flow works if the IDE populates the token cache, because `os.UserHomeDir` + `filepath.Join` is cross-platform (`kirolink.go:840-849`). But several paths break:
+The basic proxy flow works if the IDE populates the token cache, because `os.UserHomeDir` + `filepath.Join` is cross-platform (`openkiro.go:840-849`). But several paths break:
 
 | Issue | Detail | Line refs |
 |---|---|---|
-| `refresh` requires external `sqlite3` binary | `exec.Command("sqlite3", ...)` — most Windows users won't have it | `kirolink.go:897-898` |
-| `getKiroDBPath` missing Windows case | Falls through to Linux/XDG path `~/.local/share/kiro-cli/data.sqlite3` | `kirolink.go:876-887` |
-| `claude` command assumes Unix-style config | Expects `~/.claude.json` | `kirolink.go:980-1015` |
+| `refresh` requires external `sqlite3` binary | `exec.Command("sqlite3", ...)` — most Windows users won't have it | `openkiro.go:897-898` |
+| `getKiroDBPath` missing Windows case | Falls through to Linux/XDG path `~/.local/share/kiro-cli/data.sqlite3` | `openkiro.go:876-887` |
+| `claude` command assumes Unix-style config | Expects `~/.claude.json` | `openkiro.go:980-1015` |
 
 ### Edge cases to investigate
 
