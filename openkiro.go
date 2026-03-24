@@ -291,8 +291,7 @@ const (
 	profileArnIAM = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
 
 	// Payload safety limits for CodeWhisperer
-	maxToolDescLen       = 200     // max characters per tool description
-	maxRequestBodyBytes  = 1 << 20 // 1 MiB max inbound request body
+	maxToolDescLen       = 200 // max characters per tool description
 	serverReadTimeout    = 30 * time.Second
 	serverWriteTimeout   = 60 * time.Second
 	serverIdleTimeout    = 120 * time.Second
@@ -300,6 +299,8 @@ const (
 	upstreamHTTPTimeout  = 60 * time.Second
 	defaultListenAddress = "127.0.0.1"
 )
+
+var maxRequestBodyBytes int64 = 200 << 20 // 200 MiB max inbound request body
 
 var maxPayloadBytes = 250000000 // ~ 250MB soft limit for total request JSON
 
@@ -837,10 +838,23 @@ func main() {
 		setClaude()
 	case "server":
 		port := "1234" // Default port
-		if len(os.Args) > 2 {
-			port = os.Args[2]
+		listenAddr := defaultListenAddress
+		for i := 2; i < len(os.Args); i++ {
+			switch {
+			case os.Args[i] == "--listen" && i+1 < len(os.Args):
+				listenAddr = os.Args[i+1]
+				i++
+			case os.Args[i] == "--port" && i+1 < len(os.Args):
+				port = os.Args[i+1]
+				i++
+			case !strings.HasPrefix(os.Args[i], "--"):
+				port = os.Args[i] // backward compat: positional port
+			}
 		}
-		startServer(port)
+		if envPort := os.Getenv("OPENKIRO_PORT"); envPort != "" && port == "1234" {
+			port = envPort
+		}
+		startServer(listenAddr, port)
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		os.Exit(1)
@@ -1090,13 +1104,13 @@ func upstreamHTTPClient() *http.Client {
 	return &http.Client{Timeout: upstreamHTTPTimeout}
 }
 
-func serverAddress(port string) string {
-	return net.JoinHostPort(defaultListenAddress, port)
+func serverAddress(listenAddr, port string) string {
+	return net.JoinHostPort(listenAddr, port)
 }
 
-func newHTTPServer(port string, handler http.Handler) *http.Server {
+func newHTTPServer(listenAddr, port string, handler http.Handler) *http.Server {
 	return &http.Server{
-		Addr:              serverAddress(port),
+		Addr:              serverAddress(listenAddr, port),
 		Handler:           handler,
 		ReadTimeout:       serverReadTimeout,
 		WriteTimeout:      serverWriteTimeout,
@@ -1256,8 +1270,11 @@ func newProxyHandler() http.Handler {
 }
 
 // startServer starts the HTTP proxy server
-func startServer(port string) {
-	server := newHTTPServer(port, newProxyHandler())
+func startServer(listenAddr, port string) {
+	if listenAddr != defaultListenAddress {
+		log.Printf("WARNING: listening on %s — server is accessible from the network", listenAddr)
+	}
+	server := newHTTPServer(listenAddr, port, newProxyHandler())
 
 	log.Printf("Starting Anthropic API proxy server on %s", server.Addr)
 	log.Printf("Available endpoints:")
@@ -1600,6 +1617,7 @@ func handleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, a
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		return
 	}
+	rc := http.NewResponseController(w)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			log.Printf("panic in streaming handler: %v", recovered)
@@ -1734,6 +1752,8 @@ func handleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, a
 			translated,
 		)
 		for _, event := range streamEvents {
+			// Extend write deadline so long SSE streams aren't killed by WriteTimeout
+			_ = rc.SetWriteDeadline(time.Now().Add(serverWriteTimeout))
 			sendSSEEvent(w, flusher, event.Event, event.Data)
 		}
 	}

@@ -30,7 +30,7 @@ func TestDebugLoggingEnabledUsesEnv(t *testing.T) {
 }
 
 func TestNewHTTPServerUsesLocalhostOnlyAndTimeouts(t *testing.T) {
-	server := newHTTPServer("1234", http.NewServeMux())
+	server := newHTTPServer(defaultListenAddress, "1234", http.NewServeMux())
 
 	if got := server.Addr; got != "127.0.0.1:1234" {
 		t.Fatalf("expected loopback-only listen address, got %q", got)
@@ -49,7 +49,18 @@ func TestNewHTTPServerUsesLocalhostOnlyAndTimeouts(t *testing.T) {
 	}
 }
 
+func TestNewHTTPServerCustomListenAddress(t *testing.T) {
+	server := newHTTPServer("0.0.0.0", "5678", http.NewServeMux())
+	if got := server.Addr; got != "0.0.0.0:5678" {
+		t.Fatalf("expected custom listen address, got %q", got)
+	}
+}
+
 func TestNewProxyHandlerRejectsOversizedRequestBody(t *testing.T) {
+	orig := maxRequestBodyBytes
+	maxRequestBodyBytes = 1 << 10 // 1KB for test
+	t.Cleanup(func() { maxRequestBodyBytes = orig })
+
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 
@@ -63,7 +74,7 @@ func TestNewProxyHandlerRejectsOversizedRequestBody(t *testing.T) {
 	}
 
 	payload := `{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"` +
-		strings.Repeat("a", maxRequestBodyBytes) + `"}]}`
+		strings.Repeat("a", int(maxRequestBodyBytes)) + `"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
 	recorder := httptest.NewRecorder()
 
