@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+// Debug controls verbose logging in the protocol package.
+// Set to true from the main package when debug mode is enabled.
+var Debug bool
+
 type assistantResponseEvent struct {
 	Content   string  `json:"content"`
 	Input     *string `json:"input,omitempty"`
@@ -50,7 +54,9 @@ func ParseEvents(resp []byte) []SSEEvent {
 		}
 
 		if int(totalLen) > r.Len()+8 {
-			log.Println("Frame length invalid")
+			if Debug {
+				log.Println("Frame length invalid")
+			}
 			break
 		}
 
@@ -94,8 +100,9 @@ func ParseEvents(resp []byte) []SSEEvent {
 					Data:  map[string]any{"type": "ping", "metadata": metaData},
 				})
 			} else if _, exists := metaData["unit"]; exists {
-				// Metering event - silently consume or log lightly
-				log.Printf("Usage: %v %v", metaData["usage"], metaData["unit"])
+				if Debug {
+					log.Printf("Usage: %v %v", metaData["usage"], metaData["unit"])
+				}
 			}
 		}
 	}

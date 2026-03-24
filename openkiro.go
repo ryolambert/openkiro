@@ -479,7 +479,7 @@ func ensurePayloadFits(cwReq *CodeWhispererRequest) ([]byte, error) {
 		return data, nil
 	}
 
-	fmt.Printf("[payload-trim] initial size %d bytes, limit %d\n", len(data), maxPayloadBytes)
+	debugLogf("[payload-trim] initial size %d bytes, limit %d", len(data), maxPayloadBytes)
 
 	// Phase 1: Trim history from the front (oldest caller context first)
 	for len(data) > maxPayloadBytes && len(cwReq.ConversationState.History) > 0 {
@@ -491,7 +491,7 @@ func ensurePayloadFits(cwReq *CodeWhispererRequest) ([]byte, error) {
 	}
 
 	if len(data) <= maxPayloadBytes {
-		fmt.Printf("[payload-trim] fit after history trim: %d bytes\n", len(data))
+		debugLogf("[payload-trim] fit after history trim: %d bytes", len(data))
 		return data, nil
 	}
 
@@ -506,7 +506,7 @@ func ensurePayloadFits(cwReq *CodeWhispererRequest) ([]byte, error) {
 	}
 
 	if len(data) <= maxPayloadBytes {
-		fmt.Printf("[payload-trim] fit after desc trim: %d bytes\n", len(data))
+		debugLogf("[payload-trim] fit after desc trim: %d bytes", len(data))
 		return data, nil
 	}
 
@@ -520,7 +520,7 @@ func ensurePayloadFits(cwReq *CodeWhispererRequest) ([]byte, error) {
 	}
 
 	if len(data) <= maxPayloadBytes {
-		fmt.Printf("[payload-trim] fit after schema strip: %d bytes\n", len(data))
+		debugLogf("[payload-trim] fit after schema strip: %d bytes", len(data))
 		return data, nil
 	}
 
@@ -530,7 +530,7 @@ func ensurePayloadFits(cwReq *CodeWhispererRequest) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("[payload-trim] dropped all tools, final size: %d bytes\n", len(data))
+	debugLogf("[payload-trim] dropped all tools, final size: %d bytes", len(data))
 	return data, nil
 }
 
@@ -954,7 +954,7 @@ func refreshToken() {
 	}
 
 	fmt.Println("Token synced from Kiro CLI successfully!")
-	fmt.Printf("Access Token: %s...\n", newToken.AccessToken[:20])
+	fmt.Printf("Access Token: %s\n", redactToken(newToken.AccessToken))
 }
 
 // getProfileArn returns the CodeWhisperer profileArn to use.
@@ -1090,6 +1090,13 @@ func debugLogf(format string, args ...any) {
 	if debugLoggingEnabled() {
 		log.Printf(format, args...)
 	}
+}
+
+func redactToken(s string) string {
+	if len(s) <= 12 {
+		return "***"
+	}
+	return s[:8] + "..." + s[len(s)-4:]
 }
 
 func debugLogBodySummary(label string, body []byte) {
@@ -1271,6 +1278,7 @@ func newProxyHandler() http.Handler {
 
 // startServer starts the HTTP proxy server
 func startServer(listenAddr, port string) {
+	protocol.Debug = debugLoggingEnabled()
 	if listenAddr != defaultListenAddress {
 		log.Printf("WARNING: listening on %s — server is accessible from the network", listenAddr)
 	}

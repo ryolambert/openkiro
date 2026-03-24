@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -101,5 +103,48 @@ func TestHandlePanicHidesRecoveredValue(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "Internal server error") {
 		t.Fatalf("expected generic panic message, got %q", recorder.Body.String())
+	}
+}
+
+func TestRedactToken(t *testing.T) {
+	tests := []struct {
+		name, input, want string
+	}{
+		{"normal", "abcdefghijklmnopqrst", "abcdefgh...qrst"},
+		{"short", "abc", "***"},
+		{"exactly12", "123456789012", "***"},
+		{"13chars", "1234567890123", "12345678...0123"},
+		{"empty", "", "***"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := redactToken(tt.input); got != tt.want {
+				t.Errorf("redactToken(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPayloadTrimLogsRequireDebug(t *testing.T) {
+	// Ensure payload-trim logs don't appear when debug is off
+	t.Setenv("OPENKIRO_DEBUG", "")
+	t.Setenv("KIROLINK_DEBUG", "")
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	debugLogf("[payload-trim] test message %d", 42)
+
+	if buf.Len() > 0 {
+		t.Fatalf("expected no output with debug off, got %q", buf.String())
+	}
+
+	// Now enable debug
+	t.Setenv("OPENKIRO_DEBUG", "true")
+	debugLogf("[payload-trim] test message %d", 42)
+
+	if !strings.Contains(buf.String(), "[payload-trim] test message 42") {
+		t.Fatalf("expected debug output, got %q", buf.String())
 	}
 }
