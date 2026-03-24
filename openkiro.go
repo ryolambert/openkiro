@@ -906,6 +906,13 @@ func getKiroDBPath() string {
 	switch runtime.GOOS {
 	case "darwin":
 		return filepath.Join(homeDir, "Library", "Application Support", "kiro-cli", "data.sqlite3")
+	case "windows":
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			fmt.Printf("Failed to get config directory: %v\n", err)
+			os.Exit(1)
+		}
+		return filepath.Join(configDir, "kiro-cli", "data.sqlite3")
 	default:
 		return filepath.Join(homeDir, ".local", "share", "kiro-cli", "data.sqlite3")
 	}
@@ -917,6 +924,16 @@ func getKiroDBPath() string {
 // the expires_at field — so we just pull it directly from the DB.
 func refreshToken() {
 	dbPath := getKiroDBPath()
+
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: 'sqlite3' not found on PATH.\n")
+		fmt.Fprintf(os.Stderr, "The 'refresh' command requires the sqlite3 CLI to read Kiro's local database.\n")
+		fmt.Fprintf(os.Stderr, "Install it:\n")
+		fmt.Fprintf(os.Stderr, "  macOS:   brew install sqlite3\n")
+		fmt.Fprintf(os.Stderr, "  Linux:   sudo apt install sqlite3  (or your distro's equivalent)\n")
+		fmt.Fprintf(os.Stderr, "  Windows: winget install SQLite.SQLite  (or download from https://sqlite.org/download.html)\n")
+		os.Exit(1)
+	}
 
 	out, err := exec.Command("sqlite3", dbPath,
 		"SELECT value FROM auth_kv WHERE key='kirocli:odic:token';").Output()

@@ -215,6 +215,9 @@ For a concise security/performance audit, Windows compatibility answer, `kiro2cc
 - The documented export path is hardcoded to `http://localhost:1234`.
 - The upstream CodeWhisperer endpoint is hardcoded to `https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse`.
 - Windows users should note that `refresh` currently depends on `kiro-cli`'s SQLite database plus an external `sqlite3` executable.
+  - macOS: `brew install sqlite3`
+  - Linux: `sudo apt install sqlite3` (or your distro's equivalent)
+  - Windows: `winget install SQLite.SQLite` or download from [sqlite.org](https://sqlite.org/download.html)
 
 | Feature            | Supported natively | Handled by `openkiro` | Notes                    |
 | :----------------- | :----------------: | :-------------------: | :----------------------- |

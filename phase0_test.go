@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -146,5 +147,34 @@ func TestPayloadTrimLogsRequireDebug(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "[payload-trim] test message 42") {
 		t.Fatalf("expected debug output, got %q", buf.String())
+	}
+}
+
+func TestGetKiroDBPath(t *testing.T) {
+	homeDir, _ := os.UserHomeDir()
+	tests := []struct {
+		goos     string
+		contains string
+	}{
+		{"darwin", filepath.Join("Library", "Application Support", "kiro-cli", "data.sqlite3")},
+		{"linux", filepath.Join(".local", "share", "kiro-cli", "data.sqlite3")},
+		{"windows", filepath.Join("kiro-cli", "data.sqlite3")},
+	}
+	got := getKiroDBPath()
+	for _, tt := range tests {
+		t.Run(tt.goos, func(t *testing.T) {
+			if runtime.GOOS == tt.goos {
+				if !strings.Contains(got, tt.contains) {
+					t.Errorf("getKiroDBPath() on %s = %q, want substring %q", tt.goos, got, tt.contains)
+				}
+				if !strings.HasPrefix(got, homeDir) && runtime.GOOS != "windows" {
+					t.Errorf("getKiroDBPath() on %s = %q, want prefix %q", tt.goos, got, homeDir)
+				}
+			}
+		})
+	}
+	// Verify filepath.Join is used (no raw separators)
+	if strings.Contains(got, "\\\\") || (runtime.GOOS != "windows" && strings.Contains(got, "\\")) {
+		t.Errorf("getKiroDBPath() = %q, appears to use raw backslashes instead of filepath.Join", got)
 	}
 }
