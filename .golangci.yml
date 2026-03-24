@@ -1,0 +1,35 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+  exclusions:
+    rules:
+      # Test files — don't enforce errcheck
+      - path: "(.+)_test\\.go"
+        linters: [errcheck]
+      # HTTP handler writes — errors are unrecoverable over the wire
+      - path: "internal/proxy/server\\.go"
+        linters: [errcheck]
+      # Deprecated rand.Read — pre-existing, low priority
+      - path: "internal/proxy/request\\.go"
+        linters: [staticcheck]
+        text: "SA1019"
+      # Style suggestion — pre-existing
+      - path: "internal/proxy/response\\.go"
+        linters: [staticcheck]
+        text: "QF1003"
+      # Capitalized error string — pre-existing
+      - linters: [staticcheck]
+        text: "ST1005"
+      # Unused const — may be needed later
+      - path: "internal/proxy/types\\.go"
+        linters: [unused]
+        text: "ProfileArnIAM"
+
+formatters:
+  enable:
+    - gofmt

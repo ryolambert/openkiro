@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"bytes"
@@ -9,8 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/ryolambert/openkiro/internal/token"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -22,14 +25,14 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func withTestTransport(t *testing.T, fn roundTripFunc) {
 	t.Helper()
 	oldTransport := http.DefaultTransport
-	oldUpstreamTransport := upstreamTransport
+	oldUpstreamTransport := token.UpstreamTransport
 	http.DefaultTransport = fn
-	upstreamTransport = fn
-	resetUpstreamClient()
+	token.UpstreamTransport = fn
+	token.ResetUpstreamClient()
 	t.Cleanup(func() {
 		http.DefaultTransport = oldTransport
-		upstreamTransport = oldUpstreamTransport
-		resetUpstreamClient()
+		token.UpstreamTransport = oldUpstreamTransport
+		token.ResetUpstreamClient()
 	})
 }
 
@@ -78,68 +81,117 @@ func parseSSEOutput(t *testing.T, body string) []map[string]any {
 	return events
 }
 
-func TestResolveModelIDCharacterization(t *testing.T) {
-	tests := map[string]string{
-		"claude-4-sonnet":             modelSonnet46,
-		"claude_opus_4_6_v1_0":        modelOpus46,
-		"Acme Sonnet 4.5 Preview":     modelSonnet45,
-		"totally-unknown-model-alias": modelSonnet46,
-	}
+func TestNewHTTPServerUsesLocalhostOnlyAndTimeouts(t *testing.T) {
+	server := NewHTTPServer(DefaultListenAddress, "1234", http.NewServeMux())
 
-	for input, want := range tests {
-		t.Run(input, func(t *testing.T) {
-			if got := resolveModelID(input); got != want {
-				t.Fatalf("resolveModelID(%q) = %q, want %q", input, got, want)
-			}
-		})
+	if got := server.Addr; got != "127.0.0.1:1234" {
+		t.Fatalf("expected loopback-only listen address, got %q", got)
+	}
+	if got := server.ReadTimeout; got != ServerReadTimeout {
+		t.Fatalf("expected ReadTimeout %v, got %v", ServerReadTimeout, got)
+	}
+	if got := server.WriteTimeout; got != ServerWriteTimeout {
+		t.Fatalf("expected WriteTimeout %v, got %v", ServerWriteTimeout, got)
+	}
+	if got := server.IdleTimeout; got != ServerIdleTimeout {
+		t.Fatalf("expected IdleTimeout %v, got %v", ServerIdleTimeout, got)
+	}
+	if got := server.ReadHeaderTimeout; got != ServerHeaderTimeout {
+		t.Fatalf("expected ReadHeaderTimeout %v, got %v", ServerHeaderTimeout, got)
 	}
 }
 
-func TestBuildCodeWhispererRequestCharacterizationPreservesCallerContext(t *testing.T) {
-	req := AnthropicRequest{
-		Model:  "totally-unknown-model-alias",
-		System: []AnthropicSystemMessage{{Type: "text", Text: "Follow the caller's instructions."}},
-		Messages: []AnthropicRequestMessage{
-			{Role: "user", Content: "Earlier question"},
-			{Role: "assistant", Content: "Earlier answer"},
-			{Role: "user", Content: "Current question"},
-		},
+func TestNewHTTPServerCustomListenAddress(t *testing.T) {
+	server := NewHTTPServer("0.0.0.0", "5678", http.NewServeMux())
+	if got := server.Addr; got != "0.0.0.0:5678" {
+		t.Fatalf("expected custom listen address, got %q", got)
+	}
+}
+
+func TestNewProxyHandlerRejectsOversizedRequestBody(t *testing.T) {
+	orig := MaxRequestBodyBytes
+	MaxRequestBodyBytes = 1 << 10 // 1KB for test
+	t.Cleanup(func() { MaxRequestBodyBytes = orig })
+
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	tokenDir := filepath.Join(tempHome, ".aws", "sso", "cache")
+	if err := os.MkdirAll(tokenDir, 0o755); err != nil {
+		t.Fatalf("mkdir token dir: %v", err)
+	}
+	tokenFile := filepath.Join(tokenDir, "kiro-auth-token.json")
+	if err := os.WriteFile(tokenFile, []byte(`{"accessToken":"token","refreshToken":"refresh"}`), 0o644); err != nil {
+		t.Fatalf("write token file: %v", err)
 	}
 
-	cwReq := buildCodeWhispererRequest(req)
-	current := cwReq.ConversationState.CurrentMessage.UserInputMessage
+	payload := `{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"` +
+		strings.Repeat("a", int(MaxRequestBodyBytes)) + `"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
+	recorder := httptest.NewRecorder()
 
-	if current.ModelId != modelBuilderSonnet45 {
-		t.Fatalf("expected fallback model %q, got %q", modelBuilderSonnet45, current.ModelId)
+	NewProxyHandler().ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status 413 for oversized request, got %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(current.Content, req.System[0].Text) {
-		t.Fatalf("expected current content to include system context, got %q", current.Content)
+	if !strings.Contains(recorder.Body.String(), "Request body exceeds") {
+		t.Fatalf("expected oversized body message, got %q", recorder.Body.String())
 	}
-	if !strings.Contains(current.Content, "<task>\nCurrent question\n</task>") {
-		t.Fatalf("expected task wrapper in current content, got %q", current.Content)
+}
+
+func TestHandlePanicHidesRecoveredValue(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	HandlePanic(recorder, "secret panic details")
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 status, got %d", recorder.Code)
 	}
-	if strings.Contains(current.Content, "You are Claude, an AI created by Anthropic") {
-		t.Fatalf("did not expect injected identity reminder in current content, got %q", current.Content)
+	if strings.Contains(recorder.Body.String(), "secret panic details") {
+		t.Fatalf("expected panic response to hide recovered value, got %q", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "Internal server error") {
+		t.Fatalf("expected generic panic message, got %q", recorder.Body.String())
+	}
+}
+
+func TestModelsEndpointDeterministic(t *testing.T) {
+	mux := NewProxyHandler()
+	type ModelsResponse struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 
-	history := cwReq.ConversationState.History
-	expectedHistoryLen := 2
-	if len(history) != expectedHistoryLen {
-		t.Fatalf("expected %d history entries, got %d", expectedHistoryLen, len(history))
-	}
-
-	firstUser, ok := history[0].(HistoryUserMessage)
-	if !ok || firstUser.UserInputMessage.Content != "Earlier question" {
-		t.Fatalf("expected first history entry to be the caller user turn, got %#v", history[0])
-	}
-	firstAssistant, ok := history[1].(HistoryAssistantMessage)
-	if !ok || firstAssistant.AssistantResponseMessage.Content != "Earlier answer" {
-		t.Fatalf("expected second history entry to be the caller assistant turn, got %#v", history[1])
-	}
-
-	for _, entry := range history {
-		if userMsg, ok := entry.(HistoryUserMessage); ok && strings.Contains(userMsg.UserInputMessage.Content, "identity") {
-			t.Fatalf("did not expect synthetic identity history, got %#v", history)
+	var firstIDs []string
+	for i := 0; i < 10; i++ {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/models", nil))
+		if rec.Code != 200 {
+			t.Fatalf("iteration %d: status=%d", i, rec.Code)
+		}
+		var resp ModelsResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("iteration %d: decode: %v", i, err)
+		}
+		ids := make([]string, len(resp.Data))
+		for j, m := range resp.Data {
+			ids[j] = m.ID
+		}
+		if i == 0 {
+			firstIDs = ids
+			if !sort.StringsAreSorted(ids) {
+				t.Fatalf("model IDs not sorted: %v", ids)
+			}
+		} else if len(ids) != len(firstIDs) {
+			t.Fatalf("iteration %d: got %d models, want %d", i, len(ids), len(firstIDs))
+		} else {
+			for j := range ids {
+				if ids[j] != firstIDs[j] {
+					t.Fatalf("iteration %d: order differs at index %d: got %q, want %q", i, j, ids[j], firstIDs[j])
+				}
+			}
 		}
 	}
 }
@@ -155,7 +207,7 @@ func TestHandleStreamRequestCharacterizationTextOnly(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	handleStreamRequest(recorder, AnthropicRequest{
+	HandleStreamRequest(recorder, AnthropicRequest{
 		Model:    "mystery-model",
 		Messages: []AnthropicRequestMessage{{Role: "user", Content: "hello"}},
 		Stream:   true,
@@ -176,7 +228,7 @@ func TestHandleStreamRequestCharacterizationTextOnly(t *testing.T) {
 	}
 
 	message := events[0]["data"].(map[string]any)["message"].(map[string]any)
-	if got := message["model"]; got != modelBuilderSonnet45 {
+	if got := message["model"]; got != ModelBuilderSonnet45 {
 		t.Fatalf("expected streaming response to report resolved model, got %#v", got)
 	}
 	messageDelta := events[5]["data"].(map[string]any)["delta"].(map[string]any)
@@ -203,7 +255,7 @@ func TestHandleNonStreamRequestCharacterizationMixedTextToolKeepsBothBlocks(t *t
 	})
 
 	recorder := httptest.NewRecorder()
-	handleNonStreamRequest(recorder, AnthropicRequest{
+	HandleNonStreamRequest(recorder, AnthropicRequest{
 		Model:    "mystery-model",
 		Messages: []AnthropicRequestMessage{{Role: "user", Content: "hello"}},
 	}, "token")
@@ -217,7 +269,7 @@ func TestHandleNonStreamRequestCharacterizationMixedTextToolKeepsBothBlocks(t *t
 		t.Fatalf("decode non-stream response: %v", err)
 	}
 
-	if got := resp["model"]; got != modelBuilderSonnet45 {
+	if got := resp["model"]; got != ModelBuilderSonnet45 {
 		t.Fatalf("expected non-stream response to report resolved model, got %#v", got)
 	}
 	if got := resp["stop_reason"]; got != "tool_use" {
@@ -242,53 +294,5 @@ func TestHandleNonStreamRequestCharacterizationMixedTextToolKeepsBothBlocks(t *t
 	input := block["input"].(map[string]any)
 	if got := input["query"]; got != "drift" {
 		t.Fatalf("expected parsed tool input query, got %#v", got)
-	}
-}
-
-func TestSetClaudeUpdatesClaudeConfig(t *testing.T) {
-	tempHome := t.TempDir()
-	t.Setenv("HOME", tempHome)
-
-	claudeConfigPath := filepath.Join(tempHome, ".claude.json")
-	initial := map[string]any{
-		"hasCompletedOnboarding": false,
-		"kirolink":               true,
-		legacyClaudeConfigKey():  true,
-		"theme":                  "dark",
-	}
-	data, err := json.Marshal(initial)
-	if err != nil {
-		t.Fatalf("marshal initial claude config: %v", err)
-	}
-	if err := os.WriteFile(claudeConfigPath, data, 0o644); err != nil {
-		t.Fatalf("write initial claude config: %v", err)
-	}
-
-	setClaude()
-
-	updatedData, err := os.ReadFile(claudeConfigPath)
-	if err != nil {
-		t.Fatalf("read updated claude config: %v", err)
-	}
-
-	var updated map[string]any
-	if err := json.Unmarshal(updatedData, &updated); err != nil {
-		t.Fatalf("unmarshal updated claude config: %v", err)
-	}
-
-	if got := updated["hasCompletedOnboarding"]; got != true {
-		t.Fatalf("expected hasCompletedOnboarding=true, got %#v", got)
-	}
-	if got := updated["openkiro"]; got != true {
-		t.Fatalf("expected openkiro=true, got %#v", got)
-	}
-	if _, ok := updated["kirolink"]; ok {
-		t.Fatalf("expected legacy kirolink key to be removed during config update")
-	}
-	if _, ok := updated[legacyClaudeConfigKey()]; ok {
-		t.Fatalf("expected legacy helper key to be removed during config update")
-	}
-	if got := updated["theme"]; got != "dark" {
-		t.Fatalf("expected unrelated config to be preserved, got %#v", got)
 	}
 }

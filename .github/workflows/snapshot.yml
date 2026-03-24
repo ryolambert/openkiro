@@ -1,0 +1,33 @@
+name: Snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # weekly Monday 6am UTC
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --snapshot --clean
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-binaries
+          path: dist/*
+          retention-days: 7

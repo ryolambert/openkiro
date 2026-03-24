@@ -1,13 +1,16 @@
 <p align="left">
 <pre style="line-height: 0.9;">
- ████  ███  ██                   ████      ████          ████    
-▒▒██  ██▒  ▒▒                   ▒▒██      ▒▒██          ▒▒██     
- ▒██ ██   ███  ██████  █████     ▒██       ▒██  ██████   ▒██ ████
- ▒█████  ▒▒██ ▒▒██▒▒█ ██▒▒██     ▒██       ▒██ ▒▒██▒▒█   ▒██▒▒██ 
- ▒██▒▒██  ▒██  ▒██ ▒ ▒██ ▒██     ▒██       ▒██  ▒██ ▒▒   ▒█████  
- ▒██ ▒▒██ ▒██  ▒██   ▒██ ▒██     ▒██     █ ▒██  ▒██ ██   ▒██▒▒██ 
- ███  ▒▒█████ ████   ▒▒█████     ███████▒█ ████ ███▒███  ███ ████
-▒▒▒    ▒▒▒▒▒ ▒▒▒▒     ▒▒▒▒▒     ▒▒▒▒▒▒▒ ▒ ▒▒▒▒ ▒▒▒ ▒▒▒  ▒▒▒ ▒▒▒▒                            
+                         █████     ███                  
+                        ▒▒███     ▒▒▒                   
+  ██████  ████████   ██████████  ████  ████████  ██████ 
+ ███▒▒██▒▒███▒▒███ ███▒▒█▒▒███ ▒▒███ ▒▒███▒▒█ ███▒▒██ 
+▒███ ▒██ ▒███ ▒███▒███████▒███  ▒███  ▒███ ▒▒ ▒███ ▒██ 
+▒███ ▒██ ▒███ ▒███▒███▒▒▒ ▒███  ▒███  ▒███    ▒███ ▒██ 
+▒▒██████ ▒███████ ▒▒██████ ████ █████ █████   ▒▒██████ 
+ ▒▒▒▒▒▒  ▒███▒▒▒   ▒▒▒▒▒▒ ▒▒▒▒ ▒▒▒▒▒ ▒▒▒▒▒    ▒▒▒▒▒▒  
+          ▒███                                          
+          █████                                         
+         ▒▒▒▒▒                                          
 </pre>
 </p>
 
@@ -49,10 +52,18 @@ Default path: `~/.aws/sso/cache/kiro-auth-token.json`
 ### 1. Build it
 
 ```bash
-go build -o openkiro openkiro.go
+go build -o openkiro ./cmd/openkiro
 ```
 
-### 2. Make sure Kiro is already logged in
+### 2. Set up shell aliases (recommended)
+
+```bash
+./openkiro alias --install
+```
+
+This installs `okcc` and `oklaude` functions into your shell config. After reloading your shell, just run `okcc` — it auto-starts the proxy and launches Claude Code.
+
+### 3. Make sure Kiro is already logged in
 
 This tool expects a token file at:
 
@@ -68,7 +79,7 @@ If you want to sanity-check that file first:
 
 Heads-up: `read` prints both the access token and refresh token, so maybe don't paste that shit into screenshots.
 
-### 3. Export the Anthropic env vars
+### 4. Export the Anthropic env vars
 
 On macOS/Linux, you can eval the output directly:
 
@@ -87,7 +98,7 @@ By default this sets:
 - `ANTHROPIC_BASE_URL=http://localhost:1234`
 - `ANTHROPIC_API_KEY=<current access token>`
 
-### 4. Start the proxy
+### 5. Start the proxy
 
 ```bash
 ./openkiro server
@@ -107,7 +118,44 @@ Custom port:
 
 If you use a custom port, set `ANTHROPIC_BASE_URL` manually — the `export` command always prints `http://localhost:1234`.
 
-### 5. Point your client at it
+## Shell Aliases
+
+The `alias` command generates shell functions (`okcc` and `oklaude`) that auto-start the proxy and launch Claude Code with fresh credentials.
+
+Print the alias snippet (doesn't modify anything):
+
+```bash
+./openkiro alias
+```
+
+Install directly to your shell config:
+
+```bash
+./openkiro alias --install
+```
+
+Custom alias name:
+
+```bash
+./openkiro alias --name myclaud
+```
+
+Override shell detection:
+
+```bash
+./openkiro alias --shell powershell
+./openkiro alias --shell cmd
+```
+
+Custom port:
+
+```bash
+./openkiro alias --port 9000
+```
+
+After installing, reload your shell (`source ~/.zshrc`, etc.) and run `okcc` — the proxy starts automatically and Claude Code launches with the right env vars.
+
+### 6. Point your client at it
 
 Claude Code and other Anthropic-compatible clients can use the exported env vars. You can also hit the proxy directly:
 
@@ -124,6 +172,8 @@ curl -X POST http://localhost:1234/v1/messages \
 | `./openkiro read`           | Reads and prints the cached token data.                                                      |
 | `./openkiro refresh`        | Refreshes the token using the stored refresh token and writes the updated file back to disk.  |
 | `./openkiro export`         | Prints environment variable commands for the current OS/shell style.                         |
+| `./openkiro env`            | Exports env vars and writes credentials to `~/.openkiro/credentials.json` (0600 perms).      |
+| `./openkiro alias`          | Generates shell aliases (`okcc`/`oklaude`) that auto-start the proxy and launch Claude Code.  |
 | `./openkiro claude`         | Updates `~/.claude.json` and sets `hasCompletedOnboarding=true` plus `openkiro=true`.        |
 | `./openkiro server [port]`  | Starts the local Anthropic-compatible proxy server.                                          |
 
@@ -188,19 +238,32 @@ Add a custom provider to your `openclaw.json` or environment config:
 Build:
 
 ```bash
-go build -o openkiro openkiro.go
+go build -o openkiro ./cmd/openkiro
 ```
 
 Run tests:
 
 ```bash
-go test ./...
+go test -race ./...
 ```
 
 Run protocol tests only:
 
 ```bash
-go test ./protocol -v
+go test ./internal/protocol -v
+```
+
+## Project layout
+
+```
+cmd/openkiro/          ← thin CLI entry point
+internal/
+  proxy/               ← HTTP server, request/response translation, types
+  daemon/              ← background process lifecycle (start/stop/status)
+  token/               ← auth token management, upstream HTTP client
+  protocol/            ← CodeWhisperer binary frame → SSE event parser
+docs/                  ← architecture diagrams, audit reports
+.github/workflows/     ← CI, release, snapshot pipelines
 ```
 
 ## Audit and packaging plan

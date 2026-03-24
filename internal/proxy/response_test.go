@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/ryolambert/openkiro/protocol"
+	"github.com/ryolambert/openkiro/internal/protocol"
 )
 
 func TestAssembleAnthropicResponseMixedTextAndToolUse(t *testing.T) {
@@ -18,7 +18,7 @@ func TestAssembleAnthropicResponseMixedTextAndToolUse(t *testing.T) {
 		map[string]any{"toolUseId": "toolu_1", "stop": true},
 	))
 
-	translated := assembleAnthropicResponse(events)
+	translated := AssembleAnthropicResponse(events)
 	if translated.StopReason != "tool_use" {
 		t.Fatalf("expected tool_use stop reason, got %q", translated.StopReason)
 	}
@@ -44,12 +44,12 @@ func TestBuildAnthropicResponsePayloadUsesResolvedModel(t *testing.T) {
 	cwReq := CodeWhispererRequest{}
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = "CLAUDE_SONNET_4_5"
 
-	payload := buildAnthropicResponsePayload(
+	payload := BuildAnthropicResponsePayload(
 		"conv-123",
-		responseModelID(cwReq, AnthropicRequest{Model: "claude-sonnet-4-5-20250929"}),
+		ResponseModelID(cwReq, AnthropicRequest{Model: "claude-sonnet-4-5-20250929"}),
 		11,
-		translatedAnthropicResponse{
-			Blocks:       []anthropicResponseBlock{{Type: "text", Text: "done"}},
+		TranslatedAnthropicResponse{
+			Blocks:       []AnthropicResponseBlock{{Type: "text", Text: "done"}},
 			StopReason:   "end_turn",
 			OutputTokens: 1,
 		},
@@ -64,8 +64,8 @@ func TestBuildAnthropicResponsePayloadUsesResolvedModel(t *testing.T) {
 }
 
 func TestBuildAnthropicStreamEventsUsesTranslatedBlocks(t *testing.T) {
-	translated := translatedAnthropicResponse{
-		Blocks: []anthropicResponseBlock{
+	translated := TranslatedAnthropicResponse{
+		Blocks: []AnthropicResponseBlock{
 			{Type: "text", Text: "Need tool"},
 			{Type: "tool_use", ToolUseID: "toolu_1", ToolName: "lookup", ToolInput: map[string]any{"query": "weather"}},
 		},
@@ -73,7 +73,7 @@ func TestBuildAnthropicStreamEventsUsesTranslatedBlocks(t *testing.T) {
 		OutputTokens: 2,
 	}
 
-	events := buildAnthropicStreamEvents("conv-123", "msg_123", "CLAUDE_SONNET_4_5", 11, translated)
+	events := BuildAnthropicStreamEvents("conv-123", "msg_123", "CLAUDE_SONNET_4_5", 11, translated)
 	if len(events) != 10 {
 		t.Fatalf("expected 10 stream events, got %d", len(events))
 	}

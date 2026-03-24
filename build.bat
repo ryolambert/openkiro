@@ -1,11 +1,10 @@
 @echo off
-REM 编译
-go build -o openkiro.exe openkiro.go
+REM Build
+go build -o openkiro.exe ./cmd/openkiro
 IF %ERRORLEVEL% NEQ 0 (
-    echo 编译失败!
+    echo Build failed!
     pause
     exit /b 1
 )
-REM 压缩
+REM Compress
 upx --best --lzma openkiro.exe
- 

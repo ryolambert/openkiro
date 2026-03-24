@@ -1,0 +1,127 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - id: openkiro
+    binary: openkiro
+    main: ./cmd/openkiro
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^style:"
+      - "^Merge "
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "⚡ Performance"
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "♻️ Refactor"
+      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: "🔒 Security"
+      regexp: '^.*?security(\([[:word:]]+\))??!?:.+$'
+      order: 4
+    - title: Others
+      order: 999
+
+nfpms:
+  - package_name: openkiro
+    homepage: https://github.com/ryolambert/openkiro
+    maintainer: Ryo Lambert <hi@ryolambert.dev>
+    description: Kiro auth proxy — exposes Anthropic-shaped API via AWS CodeWhisperer
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+      - archlinux
+    bindir: /usr/bin
+
+# Uncomment when you create github.com/ryolambert/homebrew-tap
+# brews:
+#   - repository:
+#       owner: ryolambert
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     homepage: https://github.com/ryolambert/openkiro
+#     description: Kiro auth proxy for Claude Code
+#     install: |
+#       bin.install "openkiro"
+
+release:
+  github:
+    owner: ryolambert
+    name: openkiro
+  draft: false
+  prerelease: auto
+  name_template: "{{ .Tag }}"
+  header: |
+    ## openkiro {{ .Tag }}
+
+    Kiro auth proxy — exposes Anthropic-shaped API via AWS CodeWhisperer.
+
+    ### Install
+
+    ```bash
+    # Go install
+    go install github.com/ryolambert/openkiro@{{ .Tag }}
+
+    # Or download a binary from the assets below
+    ```
+  footer: |
+    **Full Changelog**: https://github.com/ryolambert/openkiro/compare/{{ .PreviousTag }}...{{ .Tag }}

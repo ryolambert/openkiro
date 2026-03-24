@@ -1,0 +1,84 @@
+name: Tag Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+      prerelease:
+        description: "Pre-release label (e.g. beta, rc.1). Leave empty for stable."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          # Get latest tag or default to v0.0.0
+          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+
+          MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3 | cut -d- -f1)
+
+          BUMP="${{ inputs.bump }}"
+
+          if [ "$BUMP" = "auto" ]; then
+            # Scan commits since last tag for conventional commit prefixes
+            COMMITS=$(git log "$LATEST"..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+
+            if echo "$COMMITS" | grep -qiE '^[^:]*!:'; then
+              BUMP="major"
+            elif echo "$COMMITS" | grep -qiE '^feat(\(|:)'; then
+              BUMP="minor"
+            else
+              BUMP="patch"
+            fi
+            echo "Auto-detected bump: $BUMP"
+          fi
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW="v${MAJOR}.${MINOR}.${PATCH}"
+          if [ -n "${{ inputs.prerelease }}" ]; then
+            NEW="${NEW}-${{ inputs.prerelease }}"
+          fi
+
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "Bumping $LATEST → $NEW ($BUMP)"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.bump.outputs.new }}" -m "Release ${{ steps.bump.outputs.new }}"
+          git push origin "${{ steps.bump.outputs.new }}"
+          echo "### 🏷️ Tagged ${{ steps.bump.outputs.new }}" >> "$GITHUB_SUMMARY"
+          echo "Previous: ${{ steps.bump.outputs.latest }}" >> "$GITHUB_SUMMARY"
+          echo "Bump: ${{ steps.bump.outputs.bump }}" >> "$GITHUB_SUMMARY"

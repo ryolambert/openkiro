@@ -3,6 +3,10 @@ kiro-claude-proxy
 kiro-claude-proxy.exe
 openkiro
 openkiro.exe
+bin/
+
+# GoReleaser
+dist/
 
 # Logs
 *.log
