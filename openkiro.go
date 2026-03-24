@@ -1072,20 +1072,35 @@ func setClaude() {
 
 }
 
-// getToken gets the current token
+// getToken gets the current token, retrying once on parse failure (race with writer).
 func getToken() (TokenData, error) {
 	tokenPath := getTokenFilePath()
 
-	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		return TokenData{}, fmt.Errorf("Failed to read token file: %v", err)
+	readAndParse := func() (TokenData, error) {
+		data, err := os.ReadFile(tokenPath)
+		if err != nil {
+			return TokenData{}, fmt.Errorf("reading token file: %w", err)
+		}
+		var token TokenData
+		if err := jsonStr.Unmarshal(data, &token); err != nil {
+			return TokenData{}, fmt.Errorf("parsing token file: %w", err)
+		}
+		return token, nil
 	}
 
-	var token TokenData
-	if err := jsonStr.Unmarshal(data, &token); err != nil {
-		return TokenData{}, fmt.Errorf("Failed to parse token file: %v", err)
+	token, err := readAndParse()
+	if err == nil {
+		return token, nil
 	}
 
+	// Retry once after 100ms — file may have been partially written
+	debugLogf("token read failed, retrying in 100ms: %v", err)
+	time.Sleep(100 * time.Millisecond)
+
+	token, retryErr := readAndParse()
+	if retryErr != nil {
+		return TokenData{}, fmt.Errorf("token read failed after retry: %w", retryErr)
+	}
 	return token, nil
 }
 
