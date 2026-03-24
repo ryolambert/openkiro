@@ -288,3 +288,36 @@ func TestGetTokenRetrySucceedsAfterFix(t *testing.T) {
 		t.Errorf("got AccessToken=%q, want abc123", token.AccessToken)
 	}
 }
+
+func TestGetUpstreamClientSingleton(t *testing.T) {
+	// Reset to ensure we test fresh initialization with production transport.
+	oldTransport := upstreamTransport
+	upstreamTransport = &http.Transport{
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	resetUpstreamClient()
+	t.Cleanup(func() {
+		upstreamTransport = oldTransport
+		resetUpstreamClient()
+	})
+
+	c1 := getUpstreamClient()
+	c2 := getUpstreamClient()
+	if c1 != c2 {
+		t.Fatal("getUpstreamClient must return the same instance")
+	}
+	tr, ok := c1.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("transport is not *http.Transport")
+	}
+	if tr.MaxIdleConnsPerHost != 10 {
+		t.Errorf("MaxIdleConnsPerHost=%d, want 10", tr.MaxIdleConnsPerHost)
+	}
+	if tr.IdleConnTimeout != 90*time.Second {
+		t.Errorf("IdleConnTimeout=%v, want 90s", tr.IdleConnTimeout)
+	}
+	if c1.Timeout != upstreamHTTPTimeout {
+		t.Errorf("Timeout=%v, want %v", c1.Timeout, upstreamHTTPTimeout)
+	}
+}

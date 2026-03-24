@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"crypto/sha256"
@@ -1139,8 +1140,32 @@ func debugLogBodySummary(label string, body []byte) {
 	debugLogf("%s size=%d sha256=%x", label, len(body), sum[:8])
 }
 
-func upstreamHTTPClient() *http.Client {
-	return &http.Client{Timeout: upstreamHTTPTimeout}
+var (
+	upstreamClientOnce sync.Once
+	upstreamClient     *http.Client
+	// upstreamTransport is the RoundTripper used by the pooled client.
+	// Tests may call resetUpstreamClient to swap this before the next init.
+	upstreamTransport http.RoundTripper = &http.Transport{
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	}
+)
+
+// resetUpstreamClient clears the pooled client so the next getUpstreamClient
+// call re-initializes it with the current upstreamTransport. Test-only.
+func resetUpstreamClient() {
+	upstreamClientOnce = *new(sync.Once)
+	upstreamClient = nil
+}
+
+func getUpstreamClient() *http.Client {
+	upstreamClientOnce.Do(func() {
+		upstreamClient = &http.Client{
+			Timeout:   upstreamHTTPTimeout,
+			Transport: upstreamTransport,
+		}
+	})
+	return upstreamClient
 }
 
 func serverAddress(listenAddr, port string) string {
@@ -1696,7 +1721,7 @@ func handleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, a
 	proxyReq.Header.Set("Accept", "text/event-stream")
 
 	// Send request with retry on "Improperly formed request"
-	client := upstreamHTTPClient()
+	client := getUpstreamClient()
 
 	var resp *http.Response
 	const maxRetries = 3
@@ -1840,7 +1865,7 @@ func handleNonStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest
 	proxyReq.Header.Set("Content-Type", "application/json")
 
 	// Send request
-	client := upstreamHTTPClient()
+	client := getUpstreamClient()
 
 	resp, err := client.Do(proxyReq)
 	if err != nil {

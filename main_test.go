@@ -22,8 +22,15 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func withTestTransport(t *testing.T, fn roundTripFunc) {
 	t.Helper()
 	oldTransport := http.DefaultTransport
+	oldUpstreamTransport := upstreamTransport
 	http.DefaultTransport = fn
-	t.Cleanup(func() { http.DefaultTransport = oldTransport })
+	upstreamTransport = fn
+	resetUpstreamClient()
+	t.Cleanup(func() {
+		http.DefaultTransport = oldTransport
+		upstreamTransport = oldUpstreamTransport
+		resetUpstreamClient()
+	})
 }
 
 func encodeAssistantFrame(t *testing.T, payload any) []byte {
