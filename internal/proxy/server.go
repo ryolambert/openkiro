@@ -182,6 +182,14 @@ func StartServer(ctx context.Context, listenAddr, port string) {
 	if listenAddr != DefaultListenAddress {
 		log.Printf("WARNING: listening on %s — server is accessible from the network", listenAddr)
 	}
+
+	// Persist env vars so new terminals pick up the correct URL and token.
+	baseURL := fmt.Sprintf("http://localhost:%s", port)
+	if tok, err := token.GetToken(); err == nil {
+		_ = token.WriteEnvFile(baseURL, tok.AccessToken)
+		_ = token.WriteCredentials(baseURL, tok.AccessToken)
+	}
+
 	server := NewHTTPServer(listenAddr, port, NewProxyHandler())
 
 	log.Printf("Starting Anthropic API proxy server on %s", server.Addr)

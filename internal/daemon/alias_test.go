@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -18,12 +17,12 @@ func TestGenerateBashAlias(t *testing.T) {
 		{
 			"default okcc",
 			"okcc", "openkiro", "1234",
-			[]string{"okcc()", "curl -sf", "localhost:1234/health", "openkiro start", "openkiro env --port 1234", `claude "$@"`},
+			[]string{"okcc()", "curl -sf", "localhost:1234/health", "openkiro start", `ANTHROPIC_BASE_URL="http://localhost:1234"`, `ANTHROPIC_API_KEY="$(openkiro token)"`, `claude "$@"`},
 		},
 		{
 			"custom name and port",
 			"myclaud", "/usr/local/bin/openkiro", "9000",
-			[]string{"myclaud()", "localhost:9000/health", "/usr/local/bin/openkiro env --port 9000"},
+			[]string{"myclaud()", "localhost:9000/health", `ANTHROPIC_BASE_URL="http://localhost:9000"`, `/usr/local/bin/openkiro token`},
 		},
 	}
 	for _, tt := range tests {
@@ -89,21 +88,18 @@ func TestHasAliasMarker(t *testing.T) {
 	}
 }
 
-func TestInstallAliasDuplicateDetection(t *testing.T) {
-	tmp := t.TempDir()
-	configFile := filepath.Join(tmp, ".zshrc")
-	existing := "# existing config\n# openkiro-alias-begin\nokcc() { echo hi; }\n# openkiro-alias-end\n"
-	if err := os.WriteFile(configFile, []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
+func TestInstallAliasReplacesExisting(t *testing.T) {
+	existing := "# existing config\n# openkiro-alias-begin\nokcc() { echo old; }\n# openkiro-alias-end\n"
+	newSnippet := "# openkiro-alias-begin\nokcc() { echo new; }\n# openkiro-alias-end\n"
+	result := replaceAliasBlock(existing, newSnippet)
+	if strings.Contains(result, "echo old") {
+		t.Error("old alias block should have been replaced")
 	}
-
-	// Read the file and check marker
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(result, "echo new") {
+		t.Error("new alias block should be present")
 	}
-	if !HasAliasMarker(string(data)) {
-		t.Error("expected marker to be detected in existing config")
+	if strings.Count(result, aliasMarkerBegin) != 1 {
+		t.Errorf("expected exactly one marker block, got:\n%s", result)
 	}
 }
 

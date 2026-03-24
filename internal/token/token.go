@@ -131,6 +131,11 @@ func RefreshToken() {
 		os.Exit(1)
 	}
 
+	// Update env file if we know the base URL from stored credentials.
+	if baseURL, _, err := ReadCredentials(); err == nil && baseURL != "" {
+		_ = WriteEnvFile(baseURL, newToken.AccessToken)
+	}
+
 	fmt.Println("Token synced from Kiro CLI successfully!")
 	fmt.Printf("Access Token: %s\n", RedactToken(newToken.AccessToken))
 }
@@ -152,6 +157,7 @@ func ExportEnvVars(port string) {
 	}
 
 	baseURL := fmt.Sprintf("http://localhost:%s", port)
+	_ = WriteEnvFile(baseURL, tok.AccessToken)
 
 	if runtime.GOOS == "windows" {
 		fmt.Println("CMD")

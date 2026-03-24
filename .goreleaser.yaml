@@ -91,6 +91,8 @@ nfpms:
       - apk
       - archlinux
     bindir: /usr/bin
+    scripts:
+      postinstall: scripts/post-install.sh
 
 # Uncomment when you create github.com/ryolambert/homebrew-tap
 # brews:

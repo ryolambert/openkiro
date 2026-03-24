@@ -1,0 +1,67 @@
+#compdef openkiro
+
+_openkiro() {
+  local -a commands
+  commands=(
+    'read:Read and display token'
+    'refresh:Refresh token'
+    'export:Export environment variables'
+    'env:Export env vars and store credentials'
+    'alias:Generate shell aliases for okcc/oklaude'
+    'claude:Skip Claude region restrictions'
+    'server:Start proxy server in foreground'
+    'start:Start background proxy'
+    'stop:Stop background proxy'
+    'status:Show proxy status'
+    'version:Show version'
+    'completion:Generate shell completion script'
+  )
+
+  local -a global_flags
+  global_flags=(
+    '(-h --help)'{-h,--help}'[Show help]'
+    '(-v --verbose)'{-v,--verbose}'[Enable verbose/debug logging]'
+  )
+
+  _arguments -C \
+    $global_flags \
+    '1: :->command' \
+    '*:: :->args'
+
+  case $state in
+    command)
+      _describe 'command' commands
+      ;;
+    args)
+      case $words[1] in
+        server)
+          _arguments \
+            '--port[Port to listen on]:port' \
+            '--listen[Listen address]:address' \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '(-v --verbose)'{-v,--verbose}'[Enable verbose logging]'
+          ;;
+        start|export|env)
+          _arguments \
+            '--port[Port to listen on]:port' \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '(-v --verbose)'{-v,--verbose}'[Enable verbose logging]'
+          ;;
+        alias)
+          _arguments \
+            '--shell[Shell type]:shell:(bash zsh powershell cmd)' \
+            '--name[Alias names (comma-separated)]:names' \
+            '--port[Port]:port' \
+            '--install[Write alias to shell config file]' \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '(-v --verbose)'{-v,--verbose}'[Enable verbose logging]'
+          ;;
+        completion)
+          _arguments '1:shell:(zsh)'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_openkiro "$@"

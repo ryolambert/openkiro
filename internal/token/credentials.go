@@ -54,6 +54,26 @@ func WriteCredentials(baseURL, apiKey string) error {
 	return nil
 }
 
+// WriteEnvFile writes shell-sourceable env vars to ~/.openkiro/env.sh and env.ps1 (chmod 600).
+func WriteEnvFile(baseURL, apiKey string) error {
+	dir, err := CredentialsDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("env file mkdir: %w", err)
+	}
+	sh := fmt.Sprintf("export ANTHROPIC_BASE_URL=%s\nexport ANTHROPIC_API_KEY=%s\n", baseURL, apiKey)
+	if err := os.WriteFile(filepath.Join(dir, "env.sh"), []byte(sh), 0o600); err != nil {
+		return fmt.Errorf("write env.sh: %w", err)
+	}
+	ps1 := fmt.Sprintf("$env:ANTHROPIC_BASE_URL = \"%s\"\n$env:ANTHROPIC_API_KEY = \"%s\"\n", baseURL, apiKey)
+	if err := os.WriteFile(filepath.Join(dir, "env.ps1"), []byte(ps1), 0o600); err != nil {
+		return fmt.Errorf("write env.ps1: %w", err)
+	}
+	return nil
+}
+
 // ReadCredentials reads credentials from ~/.openkiro/credentials.json.
 func ReadCredentials() (baseURL, apiKey string, err error) {
 	fp, err := CredentialsFilePath()

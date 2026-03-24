@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -128,6 +129,10 @@ func CleanStalePID() error {
 
 // SelfPath returns the absolute path to the current binary.
 func SelfPath() (string, error) {
+	// Prefer the installed binary from PATH (stable across go run / go install).
+	if p, err := exec.LookPath("openkiro"); err == nil {
+		return p, nil
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("selfPath: %w", err)
