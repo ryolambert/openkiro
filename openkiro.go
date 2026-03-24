@@ -1770,33 +1770,41 @@ func handleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, a
 	}
 	defer resp.Body.Close()
 
-	// Read full response body first
-	respBody, err := io.ReadAll(resp.Body)
+	// Send message_start + ping immediately so the client sees activity
+	model := responseModelID(cwReq, anthropicReq)
+	sendSSEEvent(w, flusher, "message_start", map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id":              messageId,
+			"type":            "message",
+			"role":            "assistant",
+			"content":         []any{},
+			"model":           model,
+			"stop_reason":     nil,
+			"stop_sequence":   nil,
+			"conversation_id": cwReq.ConversationState.ConversationId,
+			"usage": map[string]any{
+				"input_tokens":  len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content),
+				"output_tokens": 1,
+			},
+		},
+	})
+	sendSSEEvent(w, flusher, "ping", map[string]string{"type": "ping"})
+
+	// Stream events incrementally — each upstream frame is parsed and forwarded
+	// to the client as it arrives, instead of buffering the entire response.
+	err = protocol.ParseEventStream(resp.Body, func(evt protocol.SSEEvent) error {
+		_ = rc.SetWriteDeadline(time.Now().Add(serverWriteTimeout))
+		sendSSEEvent(w, flusher, evt.Event, evt.Data)
+		return nil
+	})
 	if err != nil {
-		sendErrorEvent(w, flusher, "error", fmt.Errorf("CodeWhisperer Error: Failed to read response"))
+		sendErrorEvent(w, flusher, "Stream processing error", err)
 		return
 	}
-	debugLogBodySummary("codewhisperer streaming response", respBody)
 
-	// os.WriteFile(messageId+"response.raw", respBody, 0644)
-
-	parsedEvents := protocol.ParseEvents(respBody)
-
-	if len(parsedEvents) > 0 {
-		translated := assembleAnthropicResponse(parsedEvents)
-		streamEvents := buildAnthropicStreamEvents(
-			cwReq.ConversationState.ConversationId,
-			messageId,
-			responseModelID(cwReq, anthropicReq),
-			len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content),
-			translated,
-		)
-		for _, event := range streamEvents {
-			// Extend write deadline so long SSE streams aren't killed by WriteTimeout
-			_ = rc.SetWriteDeadline(time.Now().Add(serverWriteTimeout))
-			sendSSEEvent(w, flusher, event.Event, event.Data)
-		}
-	}
+	_ = rc.SetWriteDeadline(time.Now().Add(serverWriteTimeout))
+	sendSSEEvent(w, flusher, "message_stop", map[string]any{"type": "message_stop"})
 
 }
 

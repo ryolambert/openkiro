@@ -34,17 +34,21 @@ type parserState struct {
 	nextBlockIndex    int
 }
 
-func ParseEvents(resp []byte) []SSEEvent {
-
-	events := []SSEEvent{}
+// ParseEventStream reads binary frames from r and emits SSEEvents incrementally.
+// When the reader is exhausted, any open content block is closed and a default
+// message_delta is emitted so callers always receive a complete event sequence.
+func ParseEventStream(r io.Reader, emit func(SSEEvent) error) error {
 	state := parserState{currentBlockIndex: -1}
+	hadMessageDelta := false
 
-	r := bytes.NewReader(resp)
-	for {
-		if r.Len() < 12 {
-			break
+	emitOne := func(evt SSEEvent) error {
+		if evt.Event == "message_delta" {
+			hadMessageDelta = true
 		}
+		return emit(evt)
+	}
 
+	for {
 		var totalLen, headerLen uint32
 		if err := binary.Read(r, binary.BigEndian, &totalLen); err != nil {
 			break
@@ -53,27 +57,26 @@ func ParseEvents(resp []byte) []SSEEvent {
 			break
 		}
 
-		if int(totalLen) > r.Len()+8 {
-			if Debug {
-				log.Println("Frame length invalid")
-			}
-			break
-		}
-
-		// Skip header
 		header := make([]byte, headerLen)
 		if _, err := io.ReadFull(r, header); err != nil {
 			break
 		}
 
 		payloadLen := int(totalLen) - int(headerLen) - 12
+		if payloadLen < 0 {
+			if Debug {
+				log.Println("Frame length invalid")
+			}
+			break
+		}
 		payload := make([]byte, payloadLen)
 		if _, err := io.ReadFull(r, payload); err != nil {
 			break
 		}
 
 		// Skip CRC32
-		if _, err := r.Seek(4, io.SeekCurrent); err != nil {
+		crc := make([]byte, 4)
+		if _, err := io.ReadFull(r, crc); err != nil {
 			break
 		}
 
@@ -86,7 +89,13 @@ func ParseEvents(resp []byte) []SSEEvent {
 		// First try parsing as assistantResponseEvent
 		var assistantEvt assistantResponseEvent
 		if err := json.Unmarshal([]byte(payloadStr), &assistantEvt); err == nil && (assistantEvt.Content != "" || assistantEvt.ToolUseId != "" || assistantEvt.Stop) {
-			appendAssistantEvent(&events, &state, assistantEvt)
+			var batch []SSEEvent
+			appendAssistantEvent(&batch, &state, assistantEvt)
+			for _, evt := range batch {
+				if err := emitOne(evt); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 
@@ -94,11 +103,12 @@ func ParseEvents(resp []byte) []SSEEvent {
 		var metaData map[string]any
 		if err := json.Unmarshal([]byte(payloadStr), &metaData); err == nil {
 			if _, exists := metaData["contextUsagePercentage"]; exists {
-				// Translate to a ping/metadata event for Claude Code
-				events = append(events, SSEEvent{
+				if err := emitOne(SSEEvent{
 					Event: "ping",
 					Data:  map[string]any{"type": "ping", "metadata": metaData},
-				})
+				}); err != nil {
+					return err
+				}
 			} else if _, exists := metaData["unit"]; exists {
 				if Debug {
 					log.Printf("Usage: %v %v", metaData["usage"], metaData["unit"])
@@ -107,6 +117,30 @@ func ParseEvents(resp []byte) []SSEEvent {
 		}
 	}
 
+	// Finalize: close any open block and ensure message_delta is emitted
+	if state.nextBlockIndex > 0 && (state.currentBlockType != "" || !hadMessageDelta) {
+		var final []SSEEvent
+		closeCurrentBlock(&final, &state)
+		if !hadMessageDelta {
+			appendMessageDelta(&final, "end_turn")
+		}
+		for _, evt := range final {
+			if err := emit(evt); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// ParseEvents parses all binary frames from resp and returns the complete event list.
+func ParseEvents(resp []byte) []SSEEvent {
+	var events []SSEEvent
+	_ = ParseEventStream(bytes.NewReader(resp), func(evt SSEEvent) error {
+		events = append(events, evt)
+		return nil
+	})
 	return events
 }
 

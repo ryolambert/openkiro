@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"io"
+	"sync"
 	"testing"
 )
 
@@ -144,5 +146,80 @@ func TestParseEventsMetadataPing(t *testing.T) {
 	data := events[0].Data.(map[string]any)
 	if got := data["type"]; got != "ping" {
 		t.Fatalf("expected ping data type, got %#v", got)
+	}
+}
+
+func TestParseEventStreamIncremental(t *testing.T) {
+	pr, pw := io.Pipe()
+
+	var mu sync.Mutex
+	var received []SSEEvent
+
+	done := make(chan error, 1)
+	go func() {
+		done <- ParseEventStream(pr, func(evt SSEEvent) error {
+			mu.Lock()
+			received = append(received, evt)
+			mu.Unlock()
+			return nil
+		})
+	}()
+
+	// Write first frame — should emit content_block_start + content_block_delta
+	pw.Write(encodeTestFrame(t, assistantResponseEvent{Content: "hi"}))
+
+	// Write stop frame — should emit content_block_stop + message_delta
+	pw.Write(encodeTestFrame(t, assistantResponseEvent{Stop: true}))
+
+	pw.Close()
+
+	if err := <-done; err != nil {
+		t.Fatalf("ParseEventStream error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(received))
+	}
+	wantOrder := []string{"content_block_start", "content_block_delta", "content_block_stop", "message_delta"}
+	for i, want := range wantOrder {
+		if received[i].Event != want {
+			t.Fatalf("event[%d] = %q, want %q", i, received[i].Event, want)
+		}
+	}
+}
+
+func TestParseEventStreamEmitError(t *testing.T) {
+	frame := encodeTestFrame(t, assistantResponseEvent{Content: "x"})
+	errSentinel := io.ErrClosedPipe
+
+	err := ParseEventStream(bytes.NewReader(frame), func(evt SSEEvent) error {
+		return errSentinel
+	})
+	if err != errSentinel {
+		t.Fatalf("expected sentinel error, got %v", err)
+	}
+}
+
+func TestParseEventStreamFinalizesWithoutStop(t *testing.T) {
+	// Stream with content but no stop frame — finalization should close block + emit message_delta
+	frame := encodeTestFrame(t, assistantResponseEvent{Content: "partial"})
+	var events []SSEEvent
+	err := ParseEventStream(bytes.NewReader(frame), func(evt SSEEvent) error {
+		events = append(events, evt)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events (start+delta+stop+message_delta), got %d", len(events))
+	}
+	if events[2].Event != "content_block_stop" {
+		t.Fatalf("expected finalization content_block_stop, got %q", events[2].Event)
+	}
+	if events[3].Event != "message_delta" {
+		t.Fatalf("expected finalization message_delta, got %q", events[3].Event)
 	}
 }
