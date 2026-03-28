@@ -1,6 +1,3 @@
-run:
-  go: "1.25"
-
 linters:
   enable:
     - errcheck

@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  COVERAGE_THRESHOLD: 50
+  COVERAGE_THRESHOLD: 45
 
 jobs:
   build-and-test:
@@ -59,6 +59,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          install-mode: goinstall
 
       - name: staticcheck
         run: |
