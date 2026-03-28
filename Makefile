@@ -4,10 +4,36 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: build test lint vet check clean snapshot release-dry tag-patch tag-minor tag-major
+.PHONY: build test lint vet check clean snapshot release-dry \
+        sandbox-claude sandbox-kiro sandbox-all \
+        tag-patch tag-minor tag-major
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/$(APP) ./cmd/openkiro
+
+# ── Docker Sandbox templates (Docker Desktop 4.58+) ──────────────────────────
+# Build the custom sandbox templates that extend the official Docker Sandbox
+# base images and add the openkiro proxy + companion tools.
+#
+# Usage after building:
+#   docker sandbox run --template openkiro-sandbox-claude:latest my-session ~/project
+#   docker sandbox run --template openkiro-sandbox-kiro:latest   my-session ~/project
+
+sandbox-claude:
+	docker build -f Dockerfile.sandbox-claude \
+	  --build-arg VERSION=$(VERSION) \
+	  --build-arg COMMIT=$(COMMIT) \
+	  --build-arg BUILD_DATE=$(DATE) \
+	  -t openkiro-sandbox-claude:latest .
+
+sandbox-kiro:
+	docker build -f Dockerfile.sandbox-kiro \
+	  --build-arg VERSION=$(VERSION) \
+	  --build-arg COMMIT=$(COMMIT) \
+	  --build-arg BUILD_DATE=$(DATE) \
+	  -t openkiro-sandbox-kiro:latest .
+
+sandbox-all: sandbox-claude sandbox-kiro
 
 test:
 	go test -race -count=1 ./...

@@ -1,0 +1,288 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ── Lint Dockerfiles ────────────────────────────────────────────────────────
+  hadolint:
+    name: Lint Dockerfiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          ignore: DL3018
+
+      - name: Lint Dockerfile.sandbox
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.sandbox
+          ignore: DL3018
+
+      - name: Lint Dockerfile.sandbox-claude
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.sandbox-claude
+          ignore: DL3018,DL3008
+
+      - name: Lint Dockerfile.sandbox-kiro
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.sandbox-kiro
+          ignore: DL3018,DL3008
+
+  # ── Build and test Docker images ────────────────────────────────────────────
+  build:
+    name: Build Docker images
+    runs-on: ubuntu-latest
+    needs: hadolint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build openkiro image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: openkiro:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      - name: Build sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          push: false
+          load: true
+          tags: openkiro-sandbox:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      # ── Build Docker Sandbox templates (Docker Desktop 4.58+) ─────────────
+      # These templates extend docker/sandbox-templates:claude-code and
+      # docker/sandbox-templates:kiro and are used with:
+      #   docker sandbox run --template openkiro-sandbox-claude:ci ...
+      # Build uses --pull=false so CI doesn't fail if the base images are
+      # unavailable (experimental feature; requires Docker Desktop, not CE).
+      - name: Build sandbox-claude template (best-effort)
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox-claude
+          push: false
+          load: true
+          tags: openkiro-sandbox-claude:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      - name: Build sandbox-kiro template (best-effort)
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox-kiro
+          push: false
+          load: true
+          tags: openkiro-sandbox-kiro:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      # ── Smoke-test the images ──────────────────────────────────────────────
+      - name: Smoke-test openkiro image (version)
+        run: docker run --rm openkiro:ci version
+
+      - name: Smoke-test sandbox image (openkiro version)
+        run: docker run --rm openkiro-sandbox:ci openkiro version
+
+      - name: Smoke-test sandbox image (rtk version)
+        run: docker run --rm openkiro-sandbox:ci rtk version
+
+      - name: Smoke-test sandbox image (icm version)
+        run: docker run --rm openkiro-sandbox:ci icm version
+
+      - name: Smoke-test sandbox image (headroom version)
+        run: docker run --rm openkiro-sandbox:ci headroom version
+
+      - name: Smoke-test sandbox image (mcp-gateway version)
+        run: docker run --rm openkiro-sandbox:ci mcp-gateway version
+
+      - name: Smoke-test sandbox image (claude --version)
+        run: docker run --rm openkiro-sandbox:ci claude --version
+
+      # ── Security scan ─────────────────────────────────────────────────────
+      - name: Run Trivy vulnerability scanner (openkiro)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: openkiro:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Run Trivy vulnerability scanner (sandbox)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: openkiro-sandbox:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+  # ── Push to GitHub Container Registry on tags ───────────────────────────────
+  push:
+    name: Push to GHCR
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (openkiro)
+        id: meta-openkiro
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Extract Docker metadata (sandbox)
+        id: meta-sandbox
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-sandbox
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Extract Docker metadata (sandbox-claude)
+        id: meta-sandbox-claude
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-sandbox-claude
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Extract Docker metadata (sandbox-kiro)
+        id: meta-sandbox-kiro
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-sandbox-kiro
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Push openkiro image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta-openkiro.outputs.tags }}
+          labels: ${{ steps.meta-openkiro.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      - name: Push sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          push: true
+          tags: ${{ steps.meta-sandbox.outputs.tags }}
+          labels: ${{ steps.meta-sandbox.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      - name: Push sandbox-claude template
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox-claude
+          push: true
+          tags: ${{ steps.meta-sandbox-claude.outputs.tags }}
+          labels: ${{ steps.meta-sandbox-claude.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      - name: Push sandbox-kiro template
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox-kiro
+          push: true
+          tags: ${{ steps.meta-sandbox-kiro.outputs.tags }}
+          labels: ${{ steps.meta-sandbox-kiro.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}

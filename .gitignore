@@ -1,8 +1,8 @@
 # Binary
-kiro-claude-proxy
-kiro-claude-proxy.exe
-openkiro
-openkiro.exe
+/kiro-claude-proxy
+/kiro-claude-proxy.exe
+/openkiro
+/openkiro.exe
 bin/
 
 # GoReleaser

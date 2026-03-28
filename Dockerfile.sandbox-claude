@@ -1,0 +1,121 @@
+# syntax=docker/dockerfile:1
+# Dockerfile.sandbox-claude — Docker Sandbox template for Claude Code + openkiro
+#
+# This is a CUSTOM Docker Sandbox template for Docker Desktop 4.58+.
+# It extends the official docker/sandbox-templates:claude-code base image and
+# layers in the openkiro proxy (and companion tools), configuring Claude Code
+# to route all inference through the openkiro proxy instead of directly to
+# Anthropic. The proxy translates requests to AWS CodeWhisperer using Kiro SSO
+# credentials from ~/.aws/sso/cache/kiro-auth-token.json.
+#
+# ── Quick start ──────────────────────────────────────────────────────────────
+#
+# Requirements: Docker Desktop 4.58+
+#
+# 1. Build the template:
+#
+#   docker build -f Dockerfile.sandbox-claude \
+#     -t openkiro-sandbox-claude:latest .
+#
+# 2. Run a sandbox for your project:
+#
+#   docker sandbox run \
+#     --template openkiro-sandbox-claude:latest \
+#     my-claude-session \
+#     ~/my-project
+#
+#   On first run Docker creates a microVM. The openkiro proxy starts
+#   automatically; Claude Code connects to it at http://localhost:1234.
+#
+# 3. Pass Kiro auth tokens (bind-mount read-only):
+#
+#   docker sandbox run \
+#     --template openkiro-sandbox-claude:latest \
+#     --mount ~/.aws:/root/.aws:ro \
+#     my-claude-session \
+#     ~/my-project
+#
+# 4. Pass a prompt directly:
+#
+#   docker sandbox run ... my-session ~/project -- \
+#     claude --dangerously-skip-permissions -p "write a Go HTTP server"
+#
+# See docs/docker-sandbox.md for full usage guide.
+#
+# ── Authentication ────────────────────────────────────────────────────────────
+#
+# openkiro reads Kiro auth tokens from:
+#   ~/.aws/sso/cache/kiro-auth-token.json
+#
+# Bind-mount ~/.aws from the host read-only so the proxy can refresh tokens.
+# If the token is missing, the proxy returns 403 and attempts auto-refresh.
+#
+# ANTHROPIC_API_KEY is a placeholder; real auth is handled by openkiro.
+
+# ── Stage 1: build openkiro and companion tools ──────────────────────────────
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags="-s -w \
+        -X main.version=${VERSION} \
+        -X main.commit=${COMMIT} \
+        -X main.date=${BUILD_DATE}" \
+      -o /out/openkiro    ./cmd/openkiro    && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rtk         ./cmd/rtk         && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/icm         ./cmd/icm         && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/headroom    ./cmd/headroom    && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/mcp-gateway ./cmd/mcp-gateway
+
+# ── Stage 2: Claude Code Docker Sandbox template ─────────────────────────────
+# Extends the official Docker Sandbox base image for Claude Code.
+# The base provides: Ubuntu 25.10, Claude Code CLI, Docker CLI, Git, Node.js,
+# Go, Python 3, make, jq, ripgrep, and the non-root `agent` user.
+FROM docker/sandbox-templates:claude-code
+
+# Install Go-built openkiro tools into the template.
+# Must run as root; the base image defaults to USER agent.
+USER root
+
+COPY --from=builder /out/openkiro    /usr/local/bin/openkiro
+COPY --from=builder /out/rtk         /usr/local/bin/rtk
+COPY --from=builder /out/icm         /usr/local/bin/icm
+COPY --from=builder /out/headroom    /usr/local/bin/headroom
+COPY --from=builder /out/mcp-gateway /usr/local/bin/mcp-gateway
+
+# Copy the sandbox startup wrapper that launches the proxy before the agent.
+COPY scripts/sandbox-start.sh /usr/local/bin/sandbox-start.sh
+RUN chmod +x /usr/local/bin/sandbox-start.sh
+
+# Switch back to the non-root agent user required by Docker Sandboxes.
+USER agent
+
+# ── Environment ───────────────────────────────────────────────────────────────
+# ANTHROPIC_BASE_URL — points Claude Code at the openkiro proxy.
+# ANTHROPIC_API_KEY  — placeholder; openkiro handles real auth via Kiro tokens.
+# NODE_NO_WARNINGS   — suppress Node.js startup noise in Claude Code output.
+# DISABLE_AUTOUPDATER — prevents Claude Code from auto-updating inside the VM.
+ENV ANTHROPIC_BASE_URL=http://localhost:1234 \
+    ANTHROPIC_API_KEY=openkiro-proxy \
+    OPENKIRO_PORT=1234 \
+    NODE_NO_WARNINGS=1 \
+    DISABLE_AUTOUPDATER=1
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+# sandbox-start.sh starts the openkiro proxy in the background, waits for
+# readiness, then execs the agent. Claude Code launches in YOLO mode by default
+# (matching the behaviour of the upstream docker/sandbox-templates:claude-code).
+ENTRYPOINT ["/usr/local/bin/sandbox-start.sh"]
+CMD ["claude", "--dangerously-skip-permissions"]
