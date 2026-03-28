@@ -45,7 +45,7 @@ func ResolveModelID(requested string) string {
 func GenerateUUID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("generate UUID entropy: %v", err))
+		panic(fmt.Sprintf("failed to generate UUID entropy: %v", err))
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80

@@ -105,6 +105,8 @@ func RemovePID() error {
 
 // IsRunning checks if a process with the given PID is running.
 func IsRunning(pid int) bool {
+	// On Windows, signalling the current process with signal 0 is not reliable.
+	// Treating our own PID as running keeps the daemon checks stable cross-platform.
 	if pid == os.Getpid() {
 		return true
 	}
