@@ -12,7 +12,9 @@ import (
 )
 
 var (
-	uuidEntropySource  = rand.Read
+	// uuidEntropySource is a test seam for forcing entropy read failures.
+	uuidEntropySource = rand.Read
+	// uuidFallbackSerial keeps fallback UUID seeds unique when entropy is unavailable.
 	uuidFallbackSerial uint64
 )
 
