@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -35,7 +36,8 @@ func TestWriteReadCredentialsRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stat: %v", err)
 			}
-			if perm := info.Mode().Perm(); perm != 0o600 {
+			perm := info.Mode().Perm()
+			if runtime.GOOS != "windows" && perm != 0o600 {
 				t.Errorf("permissions = %o, want 0600", perm)
 			}
 

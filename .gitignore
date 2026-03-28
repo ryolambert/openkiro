@@ -27,3 +27,7 @@ ralph.yml
 design.md
 exploration.md
 requirements.md
+
+# Test artifacts
+coverage.out
+coverage.html

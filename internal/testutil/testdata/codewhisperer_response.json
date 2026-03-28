@@ -1,0 +1,9 @@
+{
+  "assistantResponseEvent": {
+    "content": "The capital of France is Paris."
+  },
+  "messageMetadataEvent": {
+    "conversationId": "conv-01234567-89ab-cdef-0123-456789abcdef",
+    "utteranceId": "utt-01234567-89ab-cdef-0123-456789abcdef"
+  }
+}

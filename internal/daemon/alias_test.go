@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -109,11 +110,17 @@ func TestDetectShell(t *testing.T) {
 	defer func() { os.Setenv("SHELL", orig) }()
 
 	os.Setenv("SHELL", "/bin/zsh")
-	if got := DetectShell(); got != "zsh" {
-		t.Errorf("DetectShell() = %q, want zsh", got)
+	wantZsh := "zsh"
+	wantBash := "bash"
+	if runtime.GOOS == "windows" {
+		wantZsh = "powershell"
+		wantBash = "powershell"
+	}
+	if got := DetectShell(); got != wantZsh {
+		t.Errorf("DetectShell() = %q, want %s", got, wantZsh)
 	}
 	os.Setenv("SHELL", "/bin/bash")
-	if got := DetectShell(); got != "bash" {
-		t.Errorf("DetectShell() = %q, want bash", got)
+	if got := DetectShell(); got != wantBash {
+		t.Errorf("DetectShell() = %q, want %s", got, wantBash)
 	}
 }

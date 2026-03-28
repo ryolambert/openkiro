@@ -318,14 +318,14 @@ func HandleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, a
 			token.RefreshToken()
 			newToken, tokenErr := token.GetToken()
 			if tokenErr != nil {
-				sendErrorEvent(w, flusher, "error", fmt.Errorf("Token sync failed: %s", tokenErr.Error()))
+				sendErrorEvent(w, flusher, "error", fmt.Errorf("token sync failed: %s", tokenErr.Error()))
 				return
 			}
 			accessToken = newToken.AccessToken
 			log.Printf("Token synced, retrying request...")
 			continue
 		}
-		sendErrorEvent(w, flusher, "error", fmt.Errorf("CodeWhisperer Error: %s", respStr))
+		sendErrorEvent(w, flusher, "error", fmt.Errorf("codewhisperer error: %s", respStr))
 		return
 	}
 	defer resp.Body.Close()

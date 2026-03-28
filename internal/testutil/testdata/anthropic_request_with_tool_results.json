@@ -1,0 +1,55 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 4096,
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Search for the latest Go release."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01ABC",
+          "name": "web_search",
+          "input": {
+            "query": "latest Go release"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01ABC",
+          "content": [
+            {
+              "type": "text",
+              "text": "Go 1.23 was released in August 2024."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web for current information.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query."
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}

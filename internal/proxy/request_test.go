@@ -1,8 +1,12 @@
 package proxy
 
 import (
+	"errors"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/ryolambert/openkiro/internal/testutil"
 )
 
 func TestResolveModelIDCharacterization(t *testing.T) {
@@ -19,6 +23,67 @@ func TestResolveModelIDCharacterization(t *testing.T) {
 				t.Fatalf("ResolveModelID(%q) = %q, want %q", input, got, want)
 			}
 		})
+	}
+}
+
+func TestGenerateUUIDFallsBackWhenEntropyUnavailable(t *testing.T) {
+	original := uuidEntropySource
+	uuidEntropySource = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	t.Cleanup(func() { uuidEntropySource = original })
+
+	first := GenerateUUID()
+	second := GenerateUUID()
+
+	if len(first) != 36 {
+		t.Fatalf("expected UUID length 36, got %d: %q", len(first), first)
+	}
+	if len(second) != 36 {
+		t.Fatalf("expected UUID length 36, got %d: %q", len(second), second)
+	}
+	if first == second {
+		t.Fatalf("expected fallback UUIDs to remain unique, both were %q", first)
+	}
+	if first[14] != '4' || second[14] != '4' {
+		t.Fatalf("expected UUIDv4 variant in fallback output, got %q and %q", first, second)
+	}
+}
+
+func TestGenerateUUIDFallbackRemainsUniqueUnderConcurrency(t *testing.T) {
+	original := uuidEntropySource
+	uuidEntropySource = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	t.Cleanup(func() { uuidEntropySource = original })
+
+	const count = 32
+	results := make(chan string, count)
+	var wg sync.WaitGroup
+
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- GenerateUUID()
+		}()
+	}
+
+	wg.Wait()
+	close(results)
+
+	seen := make(map[string]struct{}, count)
+	for id := range results {
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate fallback UUID generated: %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != count {
+		t.Fatalf("expected %d unique UUIDs, got %d", count, len(seen))
+	}
+}
+
+func TestLoadTestDataLoadsSharedFixturesFromTestutilPackage(t *testing.T) {
+	data := testutil.LoadTestData(t, "anthropic_request.json")
+	if !strings.Contains(string(data), `"model"`) {
+		t.Fatalf("expected shared fixture contents, got %q", string(data))
 	}
 }
 
