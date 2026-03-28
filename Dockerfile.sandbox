@@ -5,25 +5,34 @@
 # internal/sandbox. Each container instance runs with:
 #   • Non-root user (sandbox UID 1000)
 #   • Read-only root filesystem (--read-only)
-#   • No network access (--network none)
+#   • Configurable network (none for isolated, bridge for agent workloads)
 #   • Dropped Linux capabilities (--cap-drop ALL)
 #   • No new privileges (--security-opt no-new-privileges)
 #   • Host workspace bind-mounted at /workspace
 #
 # Pre-installed agent tools:
-#   • openkiro — Anthropic API proxy (built from source)
-#   • rtk      — token compression toolkit (install when published)
-#   • icm      — in-context memory MCP server (install when published)
-#   • headroom — context budget manager (install when published)
-#   • MCP gateway tools (discovered via Docker labels at runtime)
+#   • openkiro     — Anthropic API proxy (built from source)
+#   • rtk          — token estimation/compression toolkit (built from source)
+#   • icm          — in-context memory MCP server (built from source)
+#   • headroom     — context budget manager (built from source)
+#   • mcp-gateway  — Docker MCP Gateway server (built from source)
+#   • claude       — Claude Code CLI (via npm @anthropic-ai/claude-code)
 #
 # Build:
 #   docker build -f Dockerfile.sandbox -t openkiro-sandbox:latest .
 #
+# Run Claude Code agent (requires bridge networking so openkiro can reach AWS):
+#   docker run --rm --network bridge \
+#     -e ANTHROPIC_BASE_URL=http://127.0.0.1:1234 \
+#     -e ANTHROPIC_API_KEY=openkiro-proxy \
+#     -v ~/.aws:/home/sandbox/.aws:ro \
+#     -v /path/to/project:/workspace:rw \
+#     openkiro-sandbox:latest
+#
 # The sandbox manager (internal/sandbox) creates containers from this image
-# automatically; you do not need to run it directly.
+# automatically using AgentConfig() or ClaudeCodeConfig() presets.
 
-# ── Stage 1: build openkiro ─────────────────────────────────────────────────
+# ── Stage 1: build Go binaries ───────────────────────────────────────────────
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
@@ -35,20 +44,35 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
-      -trimpath \
+# Build all agent binaries in a single RUN layer for cache efficiency.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
       -ldflags="-s -w \
         -X main.version=${VERSION} \
         -X main.commit=${COMMIT} \
         -X main.date=${BUILD_DATE}" \
-      -o /openkiro \
-      ./cmd/openkiro
+      -o /out/openkiro    ./cmd/openkiro    && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rtk         ./cmd/rtk         && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/icm         ./cmd/icm         && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/headroom    ./cmd/headroom    && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/mcp-gateway ./cmd/mcp-gateway
 
-# ── Stage 2: agent sandbox runtime ─────────────────────────────────────────
+# ── Stage 2: agent sandbox runtime ──────────────────────────────────────────
 FROM alpine:3.20
 
-# Install runtime dependencies: ca-certs (for HTTPS), tini (PID 1 reaper).
-RUN apk add --no-cache ca-certificates tini
+# Install runtime dependencies:
+#   ca-certificates — TLS root certs for HTTPS (openkiro proxy → AWS)
+#   tini            — PID 1 signal reaper
+#   nodejs + npm    — runtime for Claude Code CLI
+RUN apk add --no-cache ca-certificates tini nodejs npm
+
+# Install Claude Code CLI globally.
+# ANTHROPIC_BASE_URL is set at container start time by the sandbox manager
+# (see ClaudeCodeConfig preset in internal/sandbox/agent.go).
+RUN npm install --global @anthropic-ai/claude-code 2>&1 | tail -5
 
 # Create a non-root sandbox user (UID/GID 1000).
 RUN addgroup -g 1000 sandbox && \
@@ -57,27 +81,22 @@ RUN addgroup -g 1000 sandbox && \
 # Workspace directory — the sandbox manager bind-mounts host paths here.
 RUN mkdir -p /workspace && chown sandbox:sandbox /workspace
 
-# ── Install agent tools ──────────────────────────────────────────────────────
-# TODO: Uncomment and replace with real install commands once packages are published.
-#
-# rtk — token compression toolkit
-# RUN go install github.com/ryolambert/rtk@latest
-#
-# icm — in-context memory MCP server
-# RUN go install github.com/ryolambert/icm@latest
-#
-# headroom — context budget manager
-# RUN go install github.com/ryolambert/headroom@latest
-#
-# MCP gateway CLI (optional — the Go gateway package handles discovery)
-# RUN go install github.com/ryolambert/mcp-gateway@latest
-
-# Copy the openkiro binary built in stage 1.
-COPY --from=builder /openkiro /usr/local/bin/openkiro
+# ── Install Go-built agent tools ─────────────────────────────────────────────
+COPY --from=builder /out/openkiro    /usr/local/bin/openkiro
+COPY --from=builder /out/rtk         /usr/local/bin/rtk
+COPY --from=builder /out/icm         /usr/local/bin/icm
+COPY --from=builder /out/headroom    /usr/local/bin/headroom
+COPY --from=builder /out/mcp-gateway /usr/local/bin/mcp-gateway
 
 # Copy the secure entrypoint script.
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# ── Default environment variables ───────────────────────────────────────────
+# These can be overridden at container start time by the sandbox manager.
+ENV OPENKIRO_PORT=1234 \
+    NODE_NO_WARNINGS=1 \
+    DISABLE_AUTOUPDATER=1
 
 # Switch to the non-root sandbox user for all subsequent operations.
 USER sandbox

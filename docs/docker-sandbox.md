@@ -1,23 +1,70 @@
 # Docker Sandbox
 
 This document describes the Docker sandbox microVM infrastructure for openkiro:
-how the images are structured, the container lifecycle, security hardening,
-and how to use the Go packages to manage sandbox containers programmatically.
+the installed agent tools, how containers are configured for Claude Code and
+Kiro workloads, the lifecycle API, and CI integration.
 
 ---
 
-## Overview
+## Tool inventory
 
-openkiro provides two Docker images and a Go lifecycle manager for running
-isolated agent workloads as ephemeral Docker containers:
+The `openkiro-sandbox:latest` image ships with all agent tools pre-installed:
 
-| Image | Purpose |
-|-------|---------|
-| `openkiro:latest` | Minimal distroless image containing only the openkiro binary |
-| `openkiro-sandbox:latest` | Agent sandbox image — non-root Alpine with openkiro pre-installed |
+| Binary | Version | Source | Purpose |
+|--------|---------|--------|---------|
+| `openkiro` | repo | `cmd/openkiro` | Anthropic API proxy for Kiro/AWS CodeWhisperer |
+| `rtk` | repo | `cmd/rtk` | Token estimation and compression toolkit |
+| `icm` | repo | `cmd/icm` | In-context memory MCP server |
+| `headroom` | repo | `cmd/headroom` | Context budget manager |
+| `mcp-gateway` | repo | `cmd/mcp-gateway` | Docker MCP Gateway HTTP server |
+| `claude` | npm | `@anthropic-ai/claude-code` | Claude Code CLI agent |
 
-Sandbox containers are **not long-lived services**; they are created per-session
-(or per-task) and automatically destroyed when idle or when the proxy shuts down.
+All Go binaries are compiled with `CGO_ENABLED=0` (static, no libc dependency).
+`claude` is installed globally via `npm install -g @anthropic-ai/claude-code`.
+
+---
+
+## Images
+
+### `Dockerfile` — openkiro main image
+
+Two-stage build targeting `gcr.io/distroless/static-debian12:nonroot`.
+Contains **only** the `openkiro` binary and CA certificates. No shell, no
+package manager, minimal attack surface.
+
+```sh
+# Build
+docker build -t openkiro:latest .
+
+# Run the proxy (host bind-mount for Kiro auth token)
+docker run --rm \
+  -p 127.0.0.1:1234:1234 \
+  -v ~/.aws:/home/nonroot/.aws:ro \
+  openkiro:latest server
+```
+
+### `Dockerfile.sandbox` — agent sandbox image
+
+Alpine 3.20 base with:
+- `tini` as PID 1 (zombie reaping + signal forwarding)
+- `sandbox` user (UID/GID 1000) — non-root enforced at the OS level
+- Node.js + npm — required for the Claude Code CLI
+- All 5 Go binaries (`openkiro`, `rtk`, `icm`, `headroom`, `mcp-gateway`)
+- `claude` (Claude Code CLI) installed globally via npm
+- `/workspace` directory for host bind-mounts
+
+```sh
+# Build
+docker build -f Dockerfile.sandbox -t openkiro-sandbox:latest .
+
+# Verify all tools are available
+docker run --rm openkiro-sandbox:latest openkiro version
+docker run --rm openkiro-sandbox:latest rtk version
+docker run --rm openkiro-sandbox:latest icm version
+docker run --rm openkiro-sandbox:latest headroom version
+docker run --rm openkiro-sandbox:latest mcp-gateway version
+docker run --rm openkiro-sandbox:latest claude --version
+```
 
 ---
 
@@ -30,161 +77,165 @@ the `internal/sandbox` package:
 |------------|-------------|-------|
 | Non-root user | `--user` | `1000:1000` |
 | Read-only root FS | `--read-only` | enabled |
-| No network | `--network` | `none` |
-| Memory cap | `--memory` | 512 MB (default) |
-| CPU cap | `--cpus` | 0.50 (default) |
 | Drop all capabilities | `--cap-drop` | `ALL` |
 | No privilege escalation | `--security-opt` | `no-new-privileges` |
+| Memory cap | `--memory` | 512 MB (default) |
+| CPU cap | `--cpus` | 0.50 (default) |
+| Network | `--network` | `none` (default) / `bridge` (agent presets) |
 
-These defaults can be overridden via `sandbox.Config` when creating a sandbox
-programmatically.
-
----
-
-## Images
-
-### `Dockerfile` — openkiro main image
-
-A two-stage build that compiles the openkiro binary with `CGO_ENABLED=0` and
-packages it in a [distroless/static](https://github.com/GoogleContainerTools/distroless)
-base image. The final image contains only the binary and CA certificates —
-no shell, no package manager, no libc.
-
-```sh
-# Build
-docker build -t openkiro:latest .
-
-# Run the proxy
-docker run --rm \
-  -p 127.0.0.1:1234:1234 \
-  -v ~/.aws:/home/nonroot/.aws:ro \
-  openkiro:latest server
-```
-
-### `Dockerfile.sandbox` — sandbox agent image
-
-An Alpine-based image with:
-- `tini` as PID 1 (proper zombie reaping and signal forwarding)
-- `sandbox` user (UID/GID 1000)
-- `/workspace` directory for host workspace bind-mounts
-- The `openkiro` binary
-- Placeholder stubs for `rtk`, `icm`, and `headroom` (uncomment when published)
-
-```sh
-# Build
-docker build -f Dockerfile.sandbox -t openkiro-sandbox:latest .
-```
-
-The sandbox manager creates containers from this image automatically; you
-rarely need to run it directly.
+The network mode is the key difference between use cases:
+- **`none`** — fully air-gapped; no outbound traffic (default strict isolation)
+- **`bridge`** — standard Docker networking; required for Claude Code / Kiro
+  workloads so the container can reach AWS CodeWhisperer via the openkiro proxy
 
 ---
 
-## Container lifecycle
+## Configuration presets
 
-The lifecycle is managed by `internal/sandbox.Manager`. Containers move
-through the following states:
+Four named presets are available in `internal/sandbox/agent.go`:
 
-```
-creating → running → stopped → destroyed
-              ↓
-           failed  ──(auto-heal)──→ running
-```
-
-### Idle timeout and auto-heal
-
-The Manager's `StartAutoHeal` goroutine runs every 30 seconds:
-
-- **Failed** containers are restarted automatically.
-- **Running** containers that have had no activity for longer than
-  `Config.IdleTimeout` (default 30 minutes) are destroyed.
+| Preset | Network | Extra env vars | Use case |
+|--------|---------|----------------|----------|
+| `DefaultConfig()` | `none` | — | Fully isolated scripting |
+| `AgentConfig()` | `bridge` | — | General agent tooling |
+| `ClaudeCodeConfig()` | `bridge` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `NODE_NO_WARNINGS`, `DISABLE_AUTOUPDATER` | Claude Code CLI |
+| `KiroConfig()` | `bridge` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `KIRO_PROXY` | Kiro-based agent flows |
 
 ---
 
-## Programmatic usage
+## Running Claude Code in a sandbox
 
-### Creating and starting a sandbox
+Claude Code connects to the openkiro proxy at `ANTHROPIC_BASE_URL` and uses
+AWS CodeWhisperer for inference. The `ClaudeCodeConfig()` preset sets up all
+required environment variables:
 
 ```go
 import "github.com/ryolambert/openkiro/internal/sandbox"
 
 mgr := sandbox.NewManager()
+cfg := sandbox.ClaudeCodeConfig()
+cfg.WorkspaceDir = "/home/alice/my-project"
 
-cfg := sandbox.DefaultConfig()
-cfg.WorkspaceDir = "/home/alice/project"  // bind-mounted at /workspace
-
-sb, err := mgr.Create(ctx, "session-abc", cfg)
-if err != nil {
-    log.Fatal(err)
-}
-
-if err := mgr.Start(ctx, sb.ID); err != nil {
-    log.Fatal(err)
-}
+sb, err := mgr.Create(ctx, "claude-session-1", cfg)
+if err != nil { log.Fatal(err) }
+if err := mgr.Start(ctx, sb.ID); err != nil { log.Fatal(err) }
 ```
 
-### Stopping and destroying a sandbox
+Or via the CLI:
 
-```go
-// Graceful stop (container kept but not running).
-if err := mgr.Stop(ctx, sb.ID); err != nil {
-    log.Printf("stop: %v", err)
-}
+```sh
+# Create and start a Claude Code sandbox
+openkiro sandbox create \
+  --id claude-session-1 \
+  --preset claude \
+  --workspace /home/alice/my-project
 
-// Remove the container entirely.
-if err := mgr.Destroy(ctx, sb.ID); err != nil {
-    log.Printf("destroy: %v", err)
-}
+# Check running sandboxes
+openkiro sandbox list
 
-// Destroy all tracked sandboxes (e.g. on proxy shutdown).
-if err := mgr.DestroyAll(ctx); err != nil {
-    log.Printf("destroy all: %v", err)
-}
+# Destroy when done
+openkiro sandbox destroy claude-session-1
 ```
 
-### Auto-heal
+Inside the running container, Claude Code is fully configured:
 
-```go
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-
-// Runs until ctx is cancelled.
-go mgr.StartAutoHeal(ctx)
-```
-
-### Custom configuration
-
-```go
-cfg := sandbox.Config{
-    Image:        "openkiro-sandbox:latest",
-    WorkspaceDir: "/data/workspaces/session-xyz",
-    ReadOnlyRoot: true,
-    NetworkMode:  "none",
-    UID:          "1000:1000",
-    MemoryMB:     1024,
-    CPUPercent:   75.0,
-    IdleTimeout:  10 * time.Minute,
-    Env:          []string{"OPENKIRO_PORT=1234"},
-    Labels:       map[string]string{"project": "my-agent"},
-}
+```sh
+# Claude Code will use openkiro proxy at http://127.0.0.1:1234
+claude "write a Go HTTP server"
 ```
 
 ---
 
-## Docker MCP Gateway
+## Running Kiro agent workloads
 
-The `internal/gateway` package discovers MCP (Model Context Protocol) tool
-servers running as Docker containers and routes tool-listing and tool-call
-requests to them.
+Kiro uses AWS CodeWhisperer for inference via the openkiro proxy. The `KiroConfig()` preset configures the environment for Kiro-based agent flows:
 
-### Advertising an MCP server via labels
+```go
+cfg := sandbox.KiroConfig()
+cfg.WorkspaceDir = "/data/workspaces/kiro-session"
+sb, _ := mgr.Create(ctx, "kiro-session-1", cfg)
+mgr.Start(ctx, "kiro-session-1")
+```
 
-Add these labels to any Docker container to make it discoverable:
+Or via the CLI:
+
+```sh
+openkiro sandbox create --id kiro-1 --preset kiro --workspace /my/project
+```
+
+---
+
+## Agent tools reference
+
+### openkiro — Anthropic API proxy
+
+Routes Claude Code / Kiro API requests to AWS CodeWhisperer using Kiro SSO tokens from `~/.aws/sso/cache/kiro-auth-token.json`.
+
+```sh
+openkiro server          # start proxy on 127.0.0.1:1234
+openkiro server 8080     # custom port
+openkiro version
+```
+
+### rtk — token compression toolkit
+
+Estimates token counts and compresses message history.
+
+```sh
+rtk count "Hello, world!"
+echo "My prompt" | rtk count
+cat messages.json | rtk estimate
+cat messages.json | rtk compress --target 4000 > messages-compressed.json
+```
+
+### icm — in-context memory MCP server
+
+Key-value memory store, persisted to `/workspace/.icm-store.json`.
+
+```sh
+icm serve --port 8082          # start HTTP memory server
+icm store my-key "my value"    # one-shot store
+icm recall my-key              # one-shot recall
+icm list                       # show all memories
+
+# HTTP API
+curl -X POST http://127.0.0.1:8082/remember \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"project","value":"openkiro"}'
+curl 'http://127.0.0.1:8082/recall?key=project'
+```
+
+### headroom — context budget manager
+
+Reports available token budget and trims conversations to fit.
+
+```sh
+headroom status --max 8000 --used 3200
+cat chat.json | headroom check  --max 8000
+cat chat.json | headroom trim   --max 6000 > chat-trimmed.json
+```
+
+Exit code `2` means over budget (useful for scripting).
+
+### mcp-gateway — Docker MCP Gateway
+
+Discovers MCP tool servers in Docker containers and exposes them as HTTP endpoints.
+
+```sh
+mcp-gateway serve --port 8081   # start gateway
+mcp-gateway list                # one-shot discovery
+
+curl http://127.0.0.1:8081/health
+curl http://127.0.0.1:8081/servers
+curl 'http://127.0.0.1:8081/tools?server=file-tools'
+```
+
+#### Advertising an MCP server via Docker labels
 
 ```yaml
 # docker-compose.yml
 services:
-  my-tool-server:
+  file-tools:
     image: my-mcp-server:latest
     labels:
       mcp.enable: "true"
@@ -194,76 +245,101 @@ services:
       mcp.path: "/mcp"
 ```
 
-| Label | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `mcp.enable` | yes | — | Set to `"true"` to opt in |
-| `mcp.name` | no | first 12 chars of container ID | Human-readable server name |
-| `mcp.transport` | no | `http` | `http` or `stdio` |
-| `mcp.port` | no | `8080` | Container port for HTTP transport |
-| `mcp.path` | no | `/mcp` | HTTP path prefix |
+| Label | Default | Description |
+|-------|---------|-------------|
+| `mcp.enable` | — | Set `"true"` to opt in (required) |
+| `mcp.name` | first 12 chars of container ID | Human-readable name |
+| `mcp.transport` | `http` | `http` or `stdio` |
+| `mcp.port` | `8080` | Container port |
+| `mcp.path` | `/mcp` | HTTP path prefix |
 
-### Using the gateway
+### claude — Claude Code CLI
+
+Pre-installed from npm. Inside a `ClaudeCodeConfig` sandbox, `ANTHROPIC_BASE_URL` already points to the openkiro proxy — no additional configuration needed.
+
+```sh
+claude --version
+claude "write a Go HTTP handler"
+claude --help
+```
+
+---
+
+## Container lifecycle
+
+Managed by `internal/sandbox.Manager`:
+
+```
+creating → running → stopped → destroyed
+              ↓
+           failed ──(auto-heal)──→ running
+```
+
+### Programmatic usage
 
 ```go
-import "github.com/ryolambert/openkiro/internal/gateway"
+import "github.com/ryolambert/openkiro/internal/sandbox"
 
-gw := gateway.NewGateway()
+mgr := sandbox.NewManager()
 
-// One-shot discovery.
-servers, err := gw.Discover(ctx)
+// Create a Claude Code sandbox
+cfg := sandbox.ClaudeCodeConfig()
+cfg.WorkspaceDir = "/home/alice/project"
+sb, _ := mgr.Create(ctx, "session-abc", cfg)
+mgr.Start(ctx, sb.ID)
 
-// Continuous background discovery (updates every 30s).
-go gw.StartDiscovery(ctx)
+// Auto-heal: restart failed, destroy idle (runs every 30s)
+go mgr.StartAutoHeal(ctx)
 
-// Look up a server by name.
-srv := gw.ServerByName("file-tools")
+// Clean up
+mgr.Destroy(ctx, "session-abc")
+mgr.DestroyAll(ctx)
+```
 
-// Get the HTTP endpoint URL.
-endpoint, err := gw.ToolEndpoint("file-tools")
-// → "http://127.0.0.1:9090/mcp"
+### CLI usage
 
-// Check Docker daemon connectivity.
-if err := gw.Health(ctx); err != nil {
-    log.Printf("docker unavailable: %v", err)
-}
+```sh
+# Create + start (claude preset)
+openkiro sandbox create --id my-session --preset claude --workspace /my/project
+
+# List sandboxes
+openkiro sandbox list
+
+# Stop (keep container)
+openkiro sandbox stop my-session
+
+# Restart
+openkiro sandbox start my-session
+
+# Remove container
+openkiro sandbox destroy my-session
 ```
 
 ---
 
 ## CI integration
 
-The `.github/workflows/docker.yml` workflow:
+`.github/workflows/docker.yml` runs on every push/PR:
 
-1. **Lint** — runs `hadolint` on both Dockerfiles.
-2. **Build** — builds both images and runs smoke tests.
-3. **Security scan** — runs `trivy` (CRITICAL + HIGH only) on both images.
-4. **Push** — on version tags (`v*`), pushes both images to the GitHub
-   Container Registry (`ghcr.io`):
+1. **Lint** — `hadolint` on both Dockerfiles
+2. **Build** — both images (`openkiro:ci`, `openkiro-sandbox:ci`)
+3. **Smoke tests** — verifies each binary responds to `version`:
+   - `openkiro version`, `rtk version`, `icm version`, `headroom version`,
+     `mcp-gateway version`, `claude --version`
+4. **Security scan** — Trivy (CRITICAL + HIGH, exit 1 on findings)
+5. **Push to GHCR** — on version tags `v*`:
    - `ghcr.io/<owner>/openkiro:<version>`
    - `ghcr.io/<owner>/openkiro-sandbox:<version>`
-
----
-
-## Agent tools (planned)
-
-The sandbox image includes stubs for the following tools that will be
-pre-installed once their packages are published:
-
-| Tool | Description | Status |
-|------|-------------|--------|
-| `rtk` | Token compression toolkit (60–90% reduction) | Planned |
-| `icm` | In-context memory MCP server | Planned |
-| `headroom` | Context budget manager | Planned |
-
-See `Dockerfile.sandbox` for the commented installation blocks.
 
 ---
 
 ## References
 
 - [Docker Engine security](https://docs.docker.com/engine/security/)
-- [Docker sandbox hardening](https://docs.docker.com/engine/security/seccomp/)
 - [distroless base images](https://github.com/GoogleContainerTools/distroless)
-- [tini — a tiny init for containers](https://github.com/krallin/tini)
+- [tini — init for containers](https://github.com/krallin/tini)
+- [Claude Code CLI](https://www.npmjs.com/package/@anthropic-ai/claude-code)
 - [`internal/sandbox` package](../internal/sandbox/sandbox.go)
+- [`internal/sandbox/agent.go`](../internal/sandbox/agent.go) — config presets
 - [`internal/gateway` package](../internal/gateway/gateway.go)
+

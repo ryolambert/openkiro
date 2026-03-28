@@ -77,13 +77,23 @@ jobs:
       - name: Smoke-test openkiro image (version)
         run: docker run --rm openkiro:ci version
 
-      - name: Smoke-test sandbox image (version)
+      - name: Smoke-test sandbox image (openkiro version)
         run: docker run --rm openkiro-sandbox:ci openkiro version
 
-      - name: Inspect sandbox image labels
-        run: |
-          docker inspect openkiro-sandbox:ci \
-            --format '{{json .Config.Labels}}' | jq .
+      - name: Smoke-test sandbox image (rtk version)
+        run: docker run --rm openkiro-sandbox:ci rtk version
+
+      - name: Smoke-test sandbox image (icm version)
+        run: docker run --rm openkiro-sandbox:ci icm version
+
+      - name: Smoke-test sandbox image (headroom version)
+        run: docker run --rm openkiro-sandbox:ci headroom version
+
+      - name: Smoke-test sandbox image (mcp-gateway version)
+        run: docker run --rm openkiro-sandbox:ci mcp-gateway version
+
+      - name: Smoke-test sandbox image (claude --version)
+        run: docker run --rm openkiro-sandbox:ci claude --version
 
       # ── Security scan ─────────────────────────────────────────────────────
       - name: Run Trivy vulnerability scanner (openkiro)
