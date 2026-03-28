@@ -105,6 +105,9 @@ func RemovePID() error {
 
 // IsRunning checks if a process with the given PID is running.
 func IsRunning(pid int) bool {
+	if pid == os.Getpid() {
+		return true
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false

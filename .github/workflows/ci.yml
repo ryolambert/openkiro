@@ -23,7 +23,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.8"
           cache: true
 
       - name: Build
@@ -50,7 +50,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.8"
           cache: true
 
       - uses: golangci/golangci-lint-action@v6
@@ -69,7 +69,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.8"
           cache: true
 
       - name: govulncheck
@@ -85,7 +85,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.8"
           cache: true
 
       - name: Download coverage artifact
@@ -113,7 +113,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.8"
           cache: true
 
       - uses: goreleaser/goreleaser-action@v6

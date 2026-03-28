@@ -115,6 +115,9 @@ func TestNewProxyHandlerRejectsOversizedRequestBody(t *testing.T) {
 
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
+	t.Setenv("USERPROFILE", tempHome)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
 
 	tokenDir := filepath.Join(tempHome, ".aws", "sso", "cache")
 	if err := os.MkdirAll(tokenDir, 0o755); err != nil {
