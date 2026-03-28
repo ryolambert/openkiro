@@ -297,16 +297,6 @@ sequenceDiagram
     P-->>C: SSE event N (5001ms) ← immediate flush
 ```
 
-```mermaid
-flowchart LR
-    FLAG["--port flag"] -->|highest priority| RESOLVE
-    ENV["OPENKIRO_PORT env"] -->|if no flag| RESOLVE
-    DEFAULT["1234"] -->|fallback| RESOLVE
-    RESOLVE[Resolved Port] --> SERVER["server / start"]
-    RESOLVE --> EXPORT["export command"]
-```
-
-
 ## 7. Port Resolution
 
 ```mermaid
@@ -316,4 +306,262 @@ flowchart LR
     DEFAULT["1234"] -->|fallback| RESOLVE
     RESOLVE[Resolved Port] --> SERVER["server / start"]
     RESOLVE --> EXPORT["export command"]
+```
+
+---
+
+## 8. Middleware Chain Flow
+
+> Shows the full request and response path through the new middleware pipeline introduced in the proxy expansion. See [PRD.md](PRD.md) for requirements.
+
+```mermaid
+flowchart TD
+    CLIENT([Client\nClaude Code / curl]) -->|POST /v1/messages| PROXY
+
+    subgraph PROXY["openkiro Proxy :1234"]
+        subgraph REQ_CHAIN["Request Middleware Chain"]
+            TO[ToolOptimizer\nReplace tools≥5 with meta-tool\ninternal/middleware/toolopt.go]
+            COMP[Compression\nrtk: compress tool results\ninternal/middleware/compression.go]
+            MEM[Memory Recall\nicm: inject past context\ninternal/middleware/memory.go]
+            CTX[Context Budget\nheadroom: trim to fit window\ninternal/middleware/context.go]
+
+            TO --> COMP --> MEM --> CTX
+        end
+
+        TRANSLATE[Request Translator\ninternal/proxy/request.go]
+
+        subgraph RESP_CHAIN["Response Middleware Chain"]
+            TOON[TOON Encoder\nColumnar array encoding\ninternal/middleware/toon.go]
+            COMP_RESP[Response Compression\nCompress large text blocks]
+            MEM_STORE[Memory Store\nicm: persist assistant turn]
+
+            TOON --> COMP_RESP --> MEM_STORE
+        end
+    end
+
+    subgraph BACKEND["Backends"]
+        CW[CodeWhisperer API\nus-east-1]
+        GW[Docker MCP Gateway\n:8080]
+    end
+
+    CTX --> TRANSLATE
+    TRANSLATE -->|Anthropic→CW format| CW
+    CW -->|Binary frames| RESP_CHAIN
+    MEM_STORE -->|SSE / JSON| CLIENT
+
+    TO -.->|Route MCP tool calls| GW
+    GW -.->|Tool results| TO
+
+    style TO fill:#4a90d9,color:#fff
+    style COMP fill:#7b68ee,color:#fff
+    style MEM fill:#2ecc71,color:#fff
+    style CTX fill:#e67e22,color:#fff
+    style TOON fill:#e74c3c,color:#fff
+    style COMP_RESP fill:#9b59b6,color:#fff
+    style MEM_STORE fill:#27ae60,color:#fff
+```
+
+## 9. Updated Component Architecture
+
+> Extends [Diagram 1](#1-component-architecture) with the new internal packages.
+
+```mermaid
+graph TB
+    subgraph Client["Client Layer"]
+        CC[Claude Code]
+        OC[OpenClaw]
+        CURL[curl / HTTP client]
+    end
+
+    subgraph OpenKiro["openkiro binary"]
+        CLI[CLI Router\nserver|start|stop|status\nread|refresh|export\ngateway|sandbox|memory]
+
+        subgraph Server["HTTP Proxy Server :1234"]
+            MW[Log Middleware]
+            BL[Body Limiter]
+            MSG[POST /v1/messages]
+            MOD[GET /v1/models]
+            HP[GET /health]
+        end
+
+        subgraph Middleware["internal/middleware/ — NEW"]
+            CHAIN[Chain\nchain.go]
+            TOOLOPT[ToolOptimizer\ntoolopt.go]
+            TOON[TOON Encoder\ntoon.go]
+            COMPRESS[Compression\ncompression.go]
+            MEMMW[Memory\nmemory.go]
+            CTXMW[Context Budget\ncontext.go]
+        end
+
+        subgraph Proxy["internal/proxy/ — existing"]
+            TR[Request Translator\nrequest.go]
+            RS[Response Assembler\nresponse.go]
+            SRV[HTTP Server\nserver.go]
+            TYPES[Types\ntypes.go]
+        end
+
+        subgraph Gateway["internal/gateway/ — NEW"]
+            GWC[MCP Gateway Client\ngateway.go]
+            DISC[Docker Label Discovery]
+            ROUTE[Tool Router]
+        end
+
+        subgraph Sandbox["internal/sandbox/ — NEW"]
+            SBC[Sandbox Controller\nsandbox.go]
+            LIFE[Lifecycle Manager\ncreate/start/exec/destroy]
+            ISOL[Isolation Config\nnon-root, no-net]
+        end
+
+        subgraph Existing["internal/ — existing"]
+            TOKEN[token/\nAuth token management]
+            DAEMON[daemon/\nBackground lifecycle]
+            PROTOCOL[protocol/\nBinary frame parser]
+            SERVICE[service/\nOS service integration]
+        end
+    end
+
+    subgraph Upstream["Backends"]
+        CW[CodeWhisperer API]
+        DOCKER[Docker Engine API]
+        ICM[icm MCP Server\nsidecar]
+    end
+
+    CC & OC & CURL --> MSG
+    MSG --> CHAIN
+    CHAIN --> TOOLOPT --> COMPRESS --> MEMMW --> CTXMW
+    CTXMW --> TR --> CW
+    CW --> RS --> CHAIN
+    TOOLOPT -.->|MCP tool calls| GWC
+    GWC --> DISC & ROUTE
+    ROUTE --> DOCKER
+    SBC --> LIFE --> DOCKER
+    MEMMW --> ICM
+    CLI --> DAEMON & TOKEN & Gateway & Sandbox
+```
+
+## 10. Memory Integration Sequence
+
+> Shows how icm recall and store hooks integrate with the proxy request lifecycle.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant P as Proxy :1234
+    participant MW as Memory Middleware\n(internal/middleware/memory.go)
+    participant ICM as icm MCP Server\n(sidecar)
+    participant CW as CodeWhisperer
+
+    C->>P: POST /v1/messages\n{messages: [...], system: [...]}
+    P->>MW: Intercept(req)
+
+    MW->>MW: Hash conversation key\nfrom last N message IDs
+
+    MW->>ICM: tools/call recall\n{key: conv_hash, limit: 5}
+    ICM-->>MW: [{snippet, relevance, ts}, ...]
+
+    MW->>MW: Prepend recalled memories\nto system[] content blocks
+    MW-->>P: req with enriched system[]
+
+    P->>CW: Translated request\n(with injected memories)
+    CW-->>P: Response
+
+    P->>MW: PostProcess(resp)
+    MW->>MW: Extract assistant turn\nfrom response content
+
+    MW->>ICM: tools/call store\n{key: conv_hash, content: assistant_turn,\n metadata: {model, ts, tokens}}
+    ICM-->>MW: {stored: true}
+
+    MW-->>P: resp (unchanged)
+    P-->>C: SSE / JSON response
+
+    Note over MW,ICM: All icm calls are async with 50ms timeout.\nOn timeout: log warning, continue without memory.
+```
+
+## 11. ToolOptimizer Decision Tree
+
+> Logic for when to compress tool schemas, when to use the meta-tool, and when to pass through unchanged.
+
+```mermaid
+flowchart TD
+    START([Incoming request\nwith tools\[\]]) --> COUNT{Count tools}
+
+    COUNT -->|"tools < threshold\n(default: 5)"| PASSTHROUGH[Pass through unchanged\nNo schema manipulation]
+
+    COUNT -->|"tools ≥ threshold"| CACHE{Schema hash\nin cache?}
+
+    CACHE -->|Cache hit| LISTING[Generate compact listing\nname + 60-char description]
+    CACHE -->|Cache miss| STORE[Store full schemas\nkeyed by content hash]
+    STORE --> LISTING
+
+    LISTING --> META[Replace tools\[\] with\nsingle openkiro_tool_call\nmeta-tool]
+
+    META --> INJECT[Inject system prompt:\n"Call openkiro_tool_call\nwith tool_name to execute.\nAvailable: {compact_listing}"]
+
+    INJECT --> FORWARD([Forward to CodeWhisperer])
+
+    FORWARD --> RESP{Response contains\ntool_use block?}
+
+    RESP -->|"tool_name =\nopenkiro_tool_call"| RESOLVE[Resolve real tool\nfrom cache by name]
+
+    RESOLVE --> MCP{Tool backed by\nDocker MCP Gateway?}
+
+    MCP -->|Yes| GW[Route via\nGateway :8080]
+    MCP -->|No| LOCAL[Execute locally\nor return error]
+
+    GW & LOCAL --> RESULT[Inject tool_result\ninto conversation]
+
+    RESULT --> CONTINUE([Continue conversation\nwith real result])
+
+    RESP -->|"tool_name ≠\nopenkiro_tool_call"| DIRECT[Pass tool_use\nthrough unchanged]
+
+    style PASSTHROUGH fill:#27ae60,color:#fff
+    style META fill:#4a90d9,color:#fff
+    style RESOLVE fill:#e67e22,color:#fff
+    style GW fill:#9b59b6,color:#fff
+```
+
+## 12. Docker Sandbox Lifecycle
+
+> Container lifecycle for ephemeral agent runtime environments.
+
+```mermaid
+statediagram-v2
+    [*] --> Idle
+
+    Idle --> Creating: openkiro sandbox create\n[--image IMAGE] [--cpu N] [--mem NMB]
+
+    Creating --> Configuring: Pull image if missing\nCreate container with:\n- non-root UID (1000)\n- read-only rootfs\n- no-network flag\n- /workspace volume
+
+    Configuring --> Starting: docker start CONTAINER_ID
+
+    Starting --> Ready: Container healthcheck passes\nSession ID issued to caller
+
+    Ready --> Executing: openkiro sandbox exec\nSESSION_ID COMMAND
+
+    Executing --> Ready: Command completes\nOutput returned to caller
+
+    Ready --> Idle_Timer: No activity for\nidle_timeout (default 30m)
+    Idle_Timer --> Destroying: Timeout expired
+
+    Ready --> Destroying: openkiro sandbox destroy SESSION_ID\nor proxy shutdown
+
+    Destroying --> Cleanup: docker stop + docker rm\nRemove /workspace volume\nDelete session record
+
+    Cleanup --> [*]
+
+    state Ready {
+        [*] --> Listening
+        Listening --> RunCmd: exec request
+        RunCmd --> CaptureOutput: docker exec
+        CaptureOutput --> Listening: Return stdout+stderr
+    }
+
+    note right of Configuring
+        Security constraints applied at create time:
+        --user 1000:1000
+        --read-only
+        --network none (default)
+        --cpus 1.0 --memory 512m (configurable)
+        --tmpfs /tmp:rw,noexec,nosuid
+    end note
 ```
