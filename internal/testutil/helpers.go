@@ -66,17 +66,18 @@ func AssertJSONEqual(t *testing.T, expected, actual string) {
 	}
 }
 
-// LoadTestData loads a fixture file from the testdata directory adjacent to
-// the calling test file. name should be the bare filename, e.g. "request.json".
+// LoadTestData loads a fixture file from internal/testutil/testdata.
+// name should be the bare filename, e.g. "request.json".
 func LoadTestData(t *testing.T, name string) []byte {
 	t.Helper()
 
-	// Locate the testdata directory relative to the calling package.
-	_, callerFile, _, ok := runtime.Caller(1)
+	// Locate the testdata directory relative to this package so callers in other
+	// packages can use the shared fixtures consistently.
+	_, helperFile, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatal("LoadTestData: could not determine caller path")
+		t.Fatal("LoadTestData: could not determine helper path")
 	}
-	path := filepath.Join(filepath.Dir(callerFile), "testdata", name)
+	path := filepath.Join(filepath.Dir(helperFile), "testdata", name)
 
 	data, err := os.ReadFile(path)
 	if err != nil {

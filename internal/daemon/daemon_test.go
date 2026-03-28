@@ -259,6 +259,9 @@ func TestParsePortFlag(t *testing.T) {
 func TestSetClaudeUpdatesClaudeConfig(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
+	t.Setenv("USERPROFILE", tempHome)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
 
 	claudeConfigPath := filepath.Join(tempHome, ".claude.json")
 	initial := map[string]any{

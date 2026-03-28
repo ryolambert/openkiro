@@ -7,6 +7,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	uuidEntropySource  = rand.Read
+	uuidFallbackSerial uint64
 )
 
 // ResolveModelID maps a requested model alias to a CodeWhisperer model ID.
@@ -44,8 +51,9 @@ func ResolveModelID(requested string) string {
 // GenerateUUID generates a simple UUID v4.
 func GenerateUUID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("failed to generate UUID entropy: %v", err))
+	if _, err := uuidEntropySource(b); err != nil {
+		seed := fmt.Sprintf("%d-%d-%d", time.Now().UnixNano(), os.Getpid(), atomic.AddUint64(&uuidFallbackSerial, 1))
+		return GenerateDeterministicUUID(seed)
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
