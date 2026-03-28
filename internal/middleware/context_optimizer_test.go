@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -146,5 +147,49 @@ func TestContextOptimizerMiddleware_EmptyRequest_noError(t *testing.T) {
 	_, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error on empty request: %v", err)
+	}
+}
+
+func TestContextOptimizerMiddleware_UsesUpstreamWhenConfigured(t *testing.T) {
+	m := &middleware.ContextOptimizerMiddleware{
+		TokenBudget: 10,
+		Upstream: middleware.RequestOptimizerFunc(func(req *proxy.AnthropicRequest, budget int) (*proxy.AnthropicRequest, error) {
+			if budget != 10 {
+				t.Fatalf("unexpected budget %d", budget)
+			}
+			out := *req
+			out.System = []proxy.AnthropicSystemMessage{{Type: "text", Text: "headroom"}}
+			return &out, nil
+		}),
+	}
+	req := &proxy.AnthropicRequest{
+		Messages: []proxy.AnthropicRequestMessage{{Role: "user", Content: "hello"}},
+	}
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.System) != 1 || got.System[0].Text != "headroom" {
+		t.Fatalf("expected upstream optimizer result, got %+v", got.System)
+	}
+}
+
+func TestContextOptimizerMiddleware_FallsBackWhenUpstreamFails(t *testing.T) {
+	m := &middleware.ContextOptimizerMiddleware{
+		TokenBudget: 5,
+		Upstream: middleware.RequestOptimizerFunc(func(req *proxy.AnthropicRequest, budget int) (*proxy.AnthropicRequest, error) {
+			return nil, errors.New("headroom unavailable")
+		}),
+	}
+	req := &proxy.AnthropicRequest{
+		System:   []proxy.AnthropicSystemMessage{{Type: "text", Text: "do this\ndo this"}},
+		Messages: []proxy.AnthropicRequestMessage{{Role: "user", Content: strings.Repeat("x", 100)}},
+	}
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Messages) == 0 {
+		t.Fatal("expected fallback optimizer to return a request")
 	}
 }

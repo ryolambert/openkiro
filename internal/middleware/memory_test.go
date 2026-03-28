@@ -235,3 +235,35 @@ func TestMemoryMiddleware_ExtractFromResponse_disabled_doesNotStore(t *testing.T
 		t.Errorf("expected no stored entries when disabled, got %d", len(entries))
 	}
 }
+
+func TestHookMemoryStore_DelegatesToHooks(t *testing.T) {
+	var stored middleware.MemoryEntry
+	store := middleware.HookMemoryStore{
+		QueryFunc: func(context string) ([]middleware.MemoryEntry, error) {
+			if context != "hello" {
+				t.Fatalf("unexpected query context %q", context)
+			}
+			return []middleware.MemoryEntry{{Key: "hook", Value: "value"}}, nil
+		},
+		StoreFunc: func(entry middleware.MemoryEntry) error {
+			stored = entry
+			return nil
+		},
+	}
+
+	entries, err := store.Query("hello")
+	if err != nil {
+		t.Fatalf("unexpected query error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Key != "hook" {
+		t.Fatalf("unexpected query result: %+v", entries)
+	}
+
+	entry := middleware.MemoryEntry{Key: "stored", Value: "entry"}
+	if err := store.Store(entry); err != nil {
+		t.Fatalf("unexpected store error: %v", err)
+	}
+	if stored != entry {
+		t.Fatalf("expected hook-backed store to receive %+v, got %+v", entry, stored)
+	}
+}

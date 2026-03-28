@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -186,5 +187,43 @@ func TestCompressionMiddleware_nilFields_safeToProcess(t *testing.T) {
 	}
 	if got.Model != "claude-sonnet-4-5" {
 		t.Errorf("model should be unchanged, got %q", got.Model)
+	}
+}
+
+func TestCompressionMiddleware_UsesUpstreamWhenConfigured(t *testing.T) {
+	m := &middleware.CompressionMiddleware{
+		Level: middleware.CompressionLight,
+		Upstream: middleware.TextCompressorFunc(func(text string) (string, error) {
+			return "rtk:" + text, nil
+		}),
+	}
+	req := &proxy.AnthropicRequest{
+		System: []proxy.AnthropicSystemMessage{{Type: "text", Text: "hello"}},
+	}
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.System[0].Text != "rtk:hello" {
+		t.Fatalf("expected upstream compressor output, got %q", got.System[0].Text)
+	}
+}
+
+func TestCompressionMiddleware_FallsBackWhenUpstreamFails(t *testing.T) {
+	m := &middleware.CompressionMiddleware{
+		Level: middleware.CompressionLight,
+		Upstream: middleware.TextCompressorFunc(func(text string) (string, error) {
+			return "", errors.New("rtk unavailable")
+		}),
+	}
+	req := &proxy.AnthropicRequest{
+		System: []proxy.AnthropicSystemMessage{{Type: "text", Text: "hello   world"}},
+	}
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.System[0].Text != "hello world" {
+		t.Fatalf("expected fallback heuristic compression, got %q", got.System[0].Text)
 	}
 }

@@ -42,6 +42,28 @@ type ContextOptimizerMiddleware struct {
 	// TokenBudget is the maximum allowed estimated token count.
 	// Defaults to defaultContextBudget (128k) when zero.
 	TokenBudget int
+	// Upstream optionally delegates the optimization decision to a real
+	// headroom integration before falling back to the built-in heuristic logic.
+	Upstream RequestOptimizer
+}
+
+// RequestOptimizer optimizes an Anthropic request to fit within a token budget.
+//
+// This adapter exists so openkiro can integrate directly with upstream tools
+// such as headroom even though they are not distributed as Go libraries. A
+// valid optimizer must preserve the semantic intent of the request, keep
+// message ordering intact for any messages it retains, and return a request
+// that is still safe to pass into the existing proxy layer.
+type RequestOptimizer interface {
+	OptimizeRequest(req *proxy.AnthropicRequest, tokenBudget int) (*proxy.AnthropicRequest, error)
+}
+
+// RequestOptimizerFunc adapts a function into a RequestOptimizer.
+type RequestOptimizerFunc func(req *proxy.AnthropicRequest, tokenBudget int) (*proxy.AnthropicRequest, error)
+
+// OptimizeRequest implements RequestOptimizer.
+func (f RequestOptimizerFunc) OptimizeRequest(req *proxy.AnthropicRequest, tokenBudget int) (*proxy.AnthropicRequest, error) {
+	return f(req, tokenBudget)
 }
 
 // Name returns "context-optimizer".
@@ -53,6 +75,14 @@ func (c *ContextOptimizerMiddleware) ProcessRequest(req *proxy.AnthropicRequest)
 	budget := c.TokenBudget
 	if budget <= 0 {
 		budget = defaultContextBudget
+	}
+
+	if c.Upstream != nil {
+		optimized, err := c.Upstream.OptimizeRequest(req, budget)
+		if err == nil {
+			return optimized, nil
+		}
+		contextDebugLogf("[context-optimizer] upstream optimizer failed: %v", err)
 	}
 
 	estimated := estimateTokens(req)

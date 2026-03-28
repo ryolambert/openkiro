@@ -31,9 +31,41 @@ type MemoryEntry struct {
 //
 // Query returns the most relevant entries for the given context string.
 // Store persists a new entry into the backing store.
+//
+// The interface is intentionally transport-agnostic so MemoryMiddleware can be
+// backed by an in-process store, an MCP client speaking to icm, a sidecar
+// process, or another persistence layer.
 type MemoryStore interface {
 	Query(context string) ([]MemoryEntry, error)
 	Store(entry MemoryEntry) error
+}
+
+// HookMemoryStore is a lightweight MemoryStore backed by function hooks.
+//
+// It is useful for adapting direct icm integrations without requiring the
+// middleware package to know whether the backing implementation is an MCP
+// client, sidecar process, RPC stub, or in-process library.
+type HookMemoryStore struct {
+	// QueryFunc is called by Query. If nil, Query returns no entries.
+	QueryFunc func(context string) ([]MemoryEntry, error)
+	// StoreFunc is called by Store. If nil, Store is treated as a no-op.
+	StoreFunc func(entry MemoryEntry) error
+}
+
+// Query implements MemoryStore.
+func (s HookMemoryStore) Query(context string) ([]MemoryEntry, error) {
+	if s.QueryFunc == nil {
+		return nil, nil
+	}
+	return s.QueryFunc(context)
+}
+
+// Store implements MemoryStore.
+func (s HookMemoryStore) Store(entry MemoryEntry) error {
+	if s.StoreFunc == nil {
+		return nil
+	}
+	return s.StoreFunc(entry)
 }
 
 // InMemoryStore is a simple in-process implementation of MemoryStore backed
@@ -243,7 +275,7 @@ func extractAttr(tag, attr string) string {
 	value := rest[:end]
 	// Reject values that contain characters that should be escaped in XML
 	// attributes to prevent simple injection via malformed input.
-	if strings.ContainsAny(value, "<>&") {
+	if strings.ContainsAny(value, "<>&'\"") {
 		return ""
 	}
 	return value

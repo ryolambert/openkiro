@@ -47,9 +47,34 @@ var reMultiNewline = regexp.MustCompile(`\n{3,}`)
 //
 // Inspired by rtk-ai/rtk context compression:
 // https://github.com/rtk-ai/rtk
+//
+// When Upstream is configured, it is tried first so callers can delegate to a
+// real rtk integration. If the upstream compressor fails, the middleware logs
+// the failure and falls back to the built-in heuristic compressor.
 type CompressionMiddleware struct {
 	// Level controls how aggressively content is compressed.
 	Level CompressionLevel
+	// Upstream optionally delegates compression to a real external compressor
+	// such as rtk before falling back to the built-in heuristic implementation.
+	Upstream TextCompressor
+}
+
+// TextCompressor compresses a single text string.
+//
+// This adapter exists so openkiro can integrate directly with upstream tools
+// such as rtk even though they are not native Go libraries. Implementations
+// may invoke an external process, call an RPC or MCP service, or wrap an
+// in-process compression library.
+type TextCompressor interface {
+	CompressText(text string) (string, error)
+}
+
+// TextCompressorFunc adapts a function into a TextCompressor.
+type TextCompressorFunc func(text string) (string, error)
+
+// CompressText implements TextCompressor.
+func (f TextCompressorFunc) CompressText(text string) (string, error) {
+	return f(text)
 }
 
 // Name returns "compression".
@@ -120,6 +145,13 @@ func (c *CompressionMiddleware) ProcessResponse(resp []byte) ([]byte, error) {
 func (c *CompressionMiddleware) compressText(s string) string {
 	if s == "" {
 		return s
+	}
+	if c.Upstream != nil {
+		compressed, err := c.Upstream.CompressText(s)
+		if err == nil {
+			return compressed
+		}
+		compressionDebugLogf("[compression] upstream compressor failed: %v", err)
 	}
 	switch c.Level {
 	case CompressionLight:
