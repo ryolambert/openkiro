@@ -7,7 +7,7 @@ import "errors"
 // Name is the Windows Service name.
 const Name = "openkiro"
 
-var errNotWindows = errors.New("Windows Service not supported on this platform")
+var errNotWindows = errors.New("windows service not supported on this platform")
 
 func RunService(_ string) error       { return errNotWindows }
 func IsWindowsService() (bool, error) { return false, nil }

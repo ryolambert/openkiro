@@ -74,11 +74,6 @@ claude %%*
 `, aliasMarkerBegin, port, openkiroPath, openkiroPath, port)
 }
 
-var (
-	psMarkerBegin = aliasMarkerBegin
-	psMarkerEnd   = aliasMarkerEnd
-)
-
 // ShellConfigPath returns the config file path for the given shell type.
 // Prefers ~/.bash_aliases / ~/.zsh_aliases if they exist.
 func ShellConfigPath(shellType string) (string, error) {
