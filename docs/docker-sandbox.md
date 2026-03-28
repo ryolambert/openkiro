@@ -4,6 +4,139 @@ This document describes the Docker sandbox microVM infrastructure for openkiro:
 the installed agent tools, how containers are configured for Claude Code and
 Kiro workloads, the lifecycle API, and CI integration.
 
+> **New to Docker Sandboxes?** Jump straight to the
+> [Docker Sandboxes quick start](#docker-sandboxes-docker-desktop-458)
+> section to run Claude Code or Kiro with `docker sandbox run` using the
+> official Docker Desktop microVM sandbox feature.
+
+---
+
+## Docker Sandboxes (Docker Desktop 4.58+)
+
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) is an experimental
+feature in Docker Desktop 4.58+ that runs AI coding agents in isolated
+microVMs. Each sandbox has a private Docker daemon, network access controls,
+and a workspace that syncs with the host.
+
+openkiro ships two custom sandbox templates that extend the official
+`docker/sandbox-templates:claude-code` and `docker/sandbox-templates:kiro`
+base images, adding the openkiro proxy so both agents can route inference
+through AWS CodeWhisperer using Kiro SSO tokens.
+
+### Requirements
+
+- Docker Desktop 4.58 or later (macOS or Windows)
+- Kiro auth token at `~/.aws/sso/cache/kiro-auth-token.json`
+  (sign in with `kiro` first if not present)
+
+### Quick start — Claude Code sandbox
+
+```sh
+# 1. Build the template
+docker build -f Dockerfile.sandbox-claude \
+  -t openkiro-sandbox-claude:latest .
+
+# 2. Run the sandbox
+docker sandbox run \
+  --template openkiro-sandbox-claude:latest \
+  my-claude-session \
+  ~/my-project
+```
+
+When the sandbox starts:
+1. The openkiro proxy launches on `http://localhost:1234` inside the VM
+2. Claude Code connects to the proxy (via `ANTHROPIC_BASE_URL`)
+3. The proxy translates requests to AWS CodeWhisperer using your Kiro token
+
+**Pass a prompt directly:**
+
+```sh
+docker sandbox run \
+  --template openkiro-sandbox-claude:latest \
+  my-session ~/my-project \
+  -- claude --dangerously-skip-permissions -p "write a Go HTTP server"
+```
+
+**Bind-mount Kiro auth tokens** (read-only) so the proxy can refresh them:
+
+```sh
+docker sandbox run \
+  --template openkiro-sandbox-claude:latest \
+  --mount ~/.aws:/root/.aws:ro \
+  my-session ~/my-project
+```
+
+### Quick start — Kiro sandbox
+
+```sh
+# 1. Build the template
+docker build -f Dockerfile.sandbox-kiro \
+  -t openkiro-sandbox-kiro:latest .
+
+# 2. Run the sandbox
+docker sandbox run \
+  --template openkiro-sandbox-kiro:latest \
+  my-kiro-session \
+  ~/my-project
+```
+
+On first run, Kiro prompts you to authenticate via device flow (browser-based
+login). The session persists until you destroy the sandbox.
+
+```sh
+# Pass Kiro CLI options after --
+docker sandbox run \
+  --template openkiro-sandbox-kiro:latest \
+  my-kiro-session ~/my-project \
+  -- kiro chat --trust-all-tools
+```
+
+### Sandbox management commands
+
+```sh
+# List all sandboxes
+docker sandbox ls
+
+# Access a running sandbox shell
+docker sandbox exec -it my-claude-session bash
+
+# Remove a sandbox
+docker sandbox rm my-claude-session
+
+# Rebuild with latest openkiro
+docker build -f Dockerfile.sandbox-claude -t openkiro-sandbox-claude:latest .
+docker sandbox run --template openkiro-sandbox-claude:latest --pull-template always \
+  my-claude-session ~/my-project
+```
+
+### Make targets
+
+```sh
+make sandbox-claude   # build openkiro-sandbox-claude:latest
+make sandbox-kiro     # build openkiro-sandbox-kiro:latest
+make sandbox-all      # build both templates
+```
+
+### How the proxy is wired up
+
+Both template Dockerfiles use `scripts/sandbox-start.sh` as their entrypoint:
+
+1. `sandbox-start.sh` starts `openkiro server` in the background
+2. Waits up to 15 s for `/health` to respond
+3. `exec`s the agent command (`claude --dangerously-skip-permissions` or
+   `kiro chat --trust-all-tools`)
+
+The `ANTHROPIC_BASE_URL` environment variable is pre-set to
+`http://localhost:1234` in both templates, so the agent automatically uses
+the proxy without extra configuration.
+
+### Template images summary
+
+| Dockerfile | Base image | Default CMD | Use case |
+|-----------|-----------|------------|---------|
+| `Dockerfile.sandbox-claude` | `docker/sandbox-templates:claude-code` | `claude --dangerously-skip-permissions` | Claude Code + Kiro auth |
+| `Dockerfile.sandbox-kiro` | `docker/sandbox-templates:kiro` | `kiro chat --trust-all-tools` | Kiro agent + openkiro middleware |
+
 ---
 
 ## Tool inventory

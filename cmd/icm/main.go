@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 const (
@@ -179,8 +180,16 @@ func runServer(store *memoryStore, port string) {
 	})
 
 	addr := "127.0.0.1:" + port
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 	log.Printf("icm memory server listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil { //nolint:gosec
+	if err := srv.ListenAndServe(); err != nil {
 		fatal("server: %v", err)
 	}
 }

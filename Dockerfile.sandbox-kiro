@@ -1,0 +1,114 @@
+# syntax=docker/dockerfile:1
+# Dockerfile.sandbox-kiro — Docker Sandbox template for Kiro + openkiro
+#
+# This is a CUSTOM Docker Sandbox template for Docker Desktop 4.58+.
+# It extends the official docker/sandbox-templates:kiro base image and layers
+# in the openkiro proxy (and companion tools). Unlike the Claude Code template,
+# Kiro uses device-flow authentication (interactive browser login); openkiro is
+# layered in for token management and context optimization middleware.
+#
+# ── Quick start ──────────────────────────────────────────────────────────────
+#
+# Requirements: Docker Desktop 4.58+
+#
+# 1. Build the template:
+#
+#   docker build -f Dockerfile.sandbox-kiro \
+#     -t openkiro-sandbox-kiro:latest .
+#
+# 2. Run a sandbox for your project:
+#
+#   docker sandbox run \
+#     --template openkiro-sandbox-kiro:latest \
+#     my-kiro-session \
+#     ~/my-project
+#
+#   On first run, Kiro prompts you to authenticate via device flow (browser).
+#   The openkiro proxy starts automatically in the background.
+#
+# 3. Optional: bind-mount existing Kiro auth tokens to skip re-auth:
+#
+#   docker sandbox run \
+#     --template openkiro-sandbox-kiro:latest \
+#     --mount ~/.aws:/root/.aws:ro \
+#     my-kiro-session \
+#     ~/my-project
+#
+# 4. Pass Kiro CLI options after a -- separator:
+#
+#   docker sandbox run ... my-session ~/project -- kiro chat --trust-all-tools
+#
+# See docs/docker-sandbox.md for the full usage guide.
+#
+# ── Authentication ────────────────────────────────────────────────────────────
+#
+# Kiro uses device-flow login (browser-based). On first run you'll see a URL
+# and a code. Open the URL, enter the code, and return to the terminal.
+# The session persists in the sandbox until you destroy it.
+#
+# openkiro also reads Kiro SSO tokens from:
+#   ~/.aws/sso/cache/kiro-auth-token.json
+# This enables the proxy to refresh tokens automatically.
+
+# ── Stage 1: build openkiro and companion tools ──────────────────────────────
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags="-s -w \
+        -X main.version=${VERSION} \
+        -X main.commit=${COMMIT} \
+        -X main.date=${BUILD_DATE}" \
+      -o /out/openkiro    ./cmd/openkiro    && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rtk         ./cmd/rtk         && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/icm         ./cmd/icm         && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/headroom    ./cmd/headroom    && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/mcp-gateway ./cmd/mcp-gateway
+
+# ── Stage 2: Kiro Docker Sandbox template ────────────────────────────────────
+# Extends the official Docker Sandbox base image for Kiro.
+# The base provides: Ubuntu 25.10, Kiro CLI, Docker CLI, Git, Node.js, Go,
+# Python 3, make, jq, ripgrep, and the non-root `agent` user.
+FROM docker/sandbox-templates:kiro
+
+# Install Go-built openkiro tools into the template.
+# Must run as root; the base image defaults to USER agent.
+USER root
+
+COPY --from=builder /out/openkiro    /usr/local/bin/openkiro
+COPY --from=builder /out/rtk         /usr/local/bin/rtk
+COPY --from=builder /out/icm         /usr/local/bin/icm
+COPY --from=builder /out/headroom    /usr/local/bin/headroom
+COPY --from=builder /out/mcp-gateway /usr/local/bin/mcp-gateway
+
+# Copy the sandbox startup wrapper that launches the proxy before the agent.
+COPY scripts/sandbox-start.sh /usr/local/bin/sandbox-start.sh
+RUN chmod +x /usr/local/bin/sandbox-start.sh
+
+# Switch back to the non-root agent user required by Docker Sandboxes.
+USER agent
+
+# ── Environment ───────────────────────────────────────────────────────────────
+# KIRO_PROXY     — tells Kiro tooling that the openkiro proxy is active.
+# OPENKIRO_PORT  — port the proxy listens on inside the sandbox VM.
+ENV KIRO_PROXY=openkiro \
+    OPENKIRO_PORT=1234
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+# sandbox-start.sh starts the openkiro proxy in the background, waits for
+# readiness, then execs Kiro in trust-all-tools mode (matching the behaviour
+# of the upstream docker/sandbox-templates:kiro).
+ENTRYPOINT ["/usr/local/bin/sandbox-start.sh"]
+CMD ["kiro", "chat", "--trust-all-tools"]
