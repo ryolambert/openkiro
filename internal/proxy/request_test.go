@@ -3,6 +3,7 @@ package proxy
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ryolambert/openkiro/internal/testutil"
@@ -44,6 +45,38 @@ func TestGenerateUUIDFallsBackWhenEntropyUnavailable(t *testing.T) {
 	}
 	if first[14] != '4' || second[14] != '4' {
 		t.Fatalf("expected UUIDv4 variant in fallback output, got %q and %q", first, second)
+	}
+}
+
+func TestGenerateUUIDFallbackRemainsUniqueUnderConcurrency(t *testing.T) {
+	original := uuidEntropySource
+	uuidEntropySource = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	t.Cleanup(func() { uuidEntropySource = original })
+
+	const count = 32
+	results := make(chan string, count)
+	var wg sync.WaitGroup
+
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- GenerateUUID()
+		}()
+	}
+
+	wg.Wait()
+	close(results)
+
+	seen := make(map[string]struct{}, count)
+	for id := range results {
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate fallback UUID generated: %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != count {
+		t.Fatalf("expected %d unique UUIDs, got %d", count, len(seen))
 	}
 }
 
