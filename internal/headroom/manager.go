@@ -115,7 +115,9 @@ func (m *Manager) stopLocked() error {
 	}
 	if err := m.cmd.Process.Signal(os.Interrupt); err != nil {
 		// If interrupt fails (e.g. Windows), kill forcefully.
-		_ = m.cmd.Process.Kill()
+		if killErr := m.cmd.Process.Kill(); killErr != nil {
+			log.Printf("headroom: failed to kill process: %v (interrupt error: %v)", killErr, err)
+		}
 	}
 	m.running = false
 	return nil

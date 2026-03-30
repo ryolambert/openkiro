@@ -112,6 +112,10 @@ func messageContent(m proxy.AnthropicRequestMessage) any {
 // messages from headroom. System messages are extracted back out, and user/
 // assistant messages replace the originals.
 func applyCompressedMessages(original *proxy.AnthropicRequest, compressed []headroom.Message) *proxy.AnthropicRequest {
+	// Preserve originals before mutation for the fallback path.
+	origMessages := original.Messages
+	origSystem := original.System
+
 	out := *original // shallow copy
 	out.Messages = nil
 	out.System = nil
@@ -133,8 +137,8 @@ func applyCompressedMessages(original *proxy.AnthropicRequest, compressed []head
 
 	// If compression removed all messages, fall back to originals.
 	if len(out.Messages) == 0 {
-		out.Messages = original.Messages
-		out.System = original.System
+		out.Messages = origMessages
+		out.System = origSystem
 	}
 
 	return &out
