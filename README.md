@@ -295,21 +295,11 @@ For a concise security/performance audit, Windows compatibility answer, `kiro2cc
   <tr>
     <td align="center" valign="top">
       <a href="https://github.com/ryolambert">
-        <img src="https://avatars.githubusercontent.com/u/43126944?v=4" width="100px;" height="100px;" style="border-radius: 30%;" alt=""/><br />
+        <img src="https://avatars.githubusercontent.com/u/19197856?v=4" width="100px;" height="100px;" style="border-radius: 30%;" alt=""/><br />
         <sub><b>ryolambert</b></sub>
       </a><br />
       <sub>Maintainer</sub>
-    </td>
-    <td align="center" valign="top">
-      <img src="https://matthiasroder.com/content/images/2026/01/Claude.png" width="100px;" height="100px;" style="border-radius: 30%;" alt=""/><br />
-      <sub><b>Claude</b></sub><br />
-      <sub>Implementation</sub>
-    </td>
-    <td align="center" valign="top">
-      <img src="https://i.logos-download.com/114346/31977-s2560-1379b284e07d56ea2516b6dedb07d436.png/Jules_Logo_2025_favicon-s2560.png?dl" width="100px;" height="100px;" style="border-radius: 30%;" alt=""/><br />
-      <sub><b>Jules</b></sub><br />
-      <sub>Planning</sub>
-    </td>
+    </td> 
   </tr>
 </table>
 
