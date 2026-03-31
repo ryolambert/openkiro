@@ -14,18 +14,18 @@ import (
 	"time"
 )
 
-func TestPipCommand(t *testing.T) {
+func TestPythonBin(t *testing.T) {
 	cfg := DefaultConfig()
 	mgr := NewManager(cfg)
 
-	// pipCommand should return a non-empty string.
-	pip := mgr.pipCommand()
-	if pip == "" {
-		t.Fatal("pipCommand() returned empty string")
+	// pythonBin should return a non-empty string.
+	py := mgr.pythonBin()
+	if py == "" {
+		t.Fatal("pythonBin() returned empty string")
 	}
-	// On any platform it should be either "pip" or "pip3".
-	if pip != "pip" && pip != "pip3" {
-		t.Errorf("unexpected pip command: %s", pip)
+	// Should be either the configured binary or a fallback.
+	if py != "python3" && py != "python" {
+		t.Errorf("unexpected python binary: %s", py)
 	}
 }
 
@@ -119,15 +119,16 @@ func TestStopLocked_WithProcess(t *testing.T) {
 		running: true,
 	}
 
+	mgr.mu.Lock()
 	if err := mgr.stopLocked(); err != nil {
+		mgr.mu.Unlock()
 		t.Fatalf("stopLocked: unexpected error: %v", err)
 	}
-	if mgr.running {
+	running := mgr.running
+	mgr.mu.Unlock()
+	if running {
 		t.Error("expected running to be false after stopLocked")
 	}
-
-	// Clean up: wait for the process to exit.
-	_ = cmd.Wait()
 }
 
 func TestStopLocked_NilCmd(t *testing.T) {
@@ -138,9 +139,12 @@ func TestStopLocked_NilCmd(t *testing.T) {
 		running: true,
 	}
 
+	mgr.mu.Lock()
 	if err := mgr.stopLocked(); err != nil {
+		mgr.mu.Unlock()
 		t.Fatalf("stopLocked with nil cmd: unexpected error: %v", err)
 	}
+	mgr.mu.Unlock()
 }
 
 func TestStopLocked_NilProcess(t *testing.T) {
@@ -151,9 +155,12 @@ func TestStopLocked_NilProcess(t *testing.T) {
 		running: true,
 	}
 
+	mgr.mu.Lock()
 	if err := mgr.stopLocked(); err != nil {
+		mgr.mu.Unlock()
 		t.Fatalf("stopLocked with nil process: unexpected error: %v", err)
 	}
+	mgr.mu.Unlock()
 }
 
 func TestStopLocked_NotRunning(t *testing.T) {
@@ -163,9 +170,12 @@ func TestStopLocked_NotRunning(t *testing.T) {
 		running: false,
 	}
 
+	mgr.mu.Lock()
 	if err := mgr.stopLocked(); err != nil {
+		mgr.mu.Unlock()
 		t.Fatalf("stopLocked when not running: unexpected error: %v", err)
 	}
+	mgr.mu.Unlock()
 }
 
 func TestStopLocked_ProcessAlreadyExited(t *testing.T) {
@@ -185,10 +195,14 @@ func TestStopLocked_ProcessAlreadyExited(t *testing.T) {
 
 	// Signal on an already-exited process — tests the error path
 	// in stopLocked where Signal fails and Kill is attempted.
+	mgr.mu.Lock()
 	if err := mgr.stopLocked(); err != nil {
+		mgr.mu.Unlock()
 		t.Fatalf("stopLocked on exited process: unexpected error: %v", err)
 	}
-	if mgr.running {
+	running := mgr.running
+	mgr.mu.Unlock()
+	if running {
 		t.Error("expected running to be false")
 	}
 }
@@ -207,47 +221,24 @@ func TestStart_AlreadyRunning(t *testing.T) {
 }
 
 func TestInstall_BadPythonBin(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.PythonBin = "nonexistent-python-xyz"
-	// Override PipPackage so pip command is also unlikely to be found
-	// under a weird name.
-	mgr := NewManager(cfg)
-
-	// pipCommand falls through to "pip" or "pip3", so Install will
-	// try one of those but with a nonexistent package. Either way,
-	// it exercises the code path.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = mgr.Install(ctx)
+	t.Skip("skipped: Install uses real pip; requires dependency injection or stubbing")
 }
 
-func TestPipCommand_Fallback(t *testing.T) {
-	// Verify pipCommand doesn't panic and returns a string even with
+func TestPythonBin_Fallback(t *testing.T) {
+	// Verify pythonBin doesn't panic and returns a string even with
 	// a customized (but still valid) config.
 	cfg := DefaultConfig()
 	cfg.PythonBin = "python3"
 	mgr := NewManager(cfg)
 
-	result := mgr.pipCommand()
-	if result != "pip" && result != "pip3" {
-		t.Errorf("unexpected pip command: %q", result)
+	result := mgr.pythonBin()
+	if result != "python" && result != "python3" {
+		t.Errorf("unexpected python binary: %q", result)
 	}
 }
 
 func TestInstall_ContextTimeout(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.PipPackage = "nonexistent-headroom-package-xyz-12345"
-	mgr := NewManager(cfg)
-
-	// Use a very short timeout so pip fails quickly.
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	err := mgr.Install(ctx)
-	// Should fail (either timeout or package not found).
-	if err == nil {
-		t.Log("Install succeeded unexpectedly (pip found something?), that's OK")
-	}
+	t.Skip("skipped: Install uses real pip; requires dependency injection or stubbing")
 }
 
 func TestManager_DirectFieldAccess(t *testing.T) {

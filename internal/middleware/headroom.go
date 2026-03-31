@@ -7,6 +7,7 @@ import (
 
 	"github.com/ryolambert/openkiro/internal/headroom"
 	"github.com/ryolambert/openkiro/internal/proxy"
+	"github.com/ryolambert/openkiro/internal/token"
 )
 
 // HeadroomMiddleware compresses request messages via the headroom Python proxy
@@ -52,7 +53,7 @@ func (h *HeadroomMiddleware) ProcessRequest(req *proxy.AnthropicRequest) (*proxy
 		return req, nil
 	}
 
-	log.Printf("headroom: compressed %d→%d tokens (saved %d, ratio %.0f%%)",
+	token.DebugLogf("headroom: compressed %d→%d tokens (saved %d, ratio %.0f%%)",
 		result.TokensBefore, result.TokensAfter, result.TokensSaved,
 		result.CompressionRatio*100)
 
@@ -93,19 +94,11 @@ func anthropicToHeadroomMessages(req *proxy.AnthropicRequest) []headroom.Message
 }
 
 // messageContent extracts the content from an AnthropicRequestMessage.
-// The Content field is either a plain string or a JSON array of ContentBlocks.
+// The Content field is either a plain string or a structured value (e.g.
+// []ContentBlock for tool_use / tool_result). Structured content is
+// preserved as-is so downstream code can still inspect typed blocks.
 func messageContent(m proxy.AnthropicRequestMessage) any {
-	switch v := m.Content.(type) {
-	case string:
-		return v
-	default:
-		// For complex content ([]ContentBlock), pass the raw JSON through.
-		b, err := json.Marshal(v)
-		if err != nil {
-			return ""
-		}
-		return string(b)
-	}
+	return m.Content
 }
 
 // applyCompressedMessages rebuilds the AnthropicRequest using the compressed
@@ -122,7 +115,18 @@ func applyCompressedMessages(original *proxy.AnthropicRequest, compressed []head
 
 	for _, m := range compressed {
 		if m.Role == "system" {
-			text, _ := m.Content.(string)
+			var text string
+			switch v := m.Content.(type) {
+			case string:
+				text = v
+			default:
+				// Non-string system content: marshal to JSON string so the
+				// system prompt is never silently dropped.
+				b, err := json.Marshal(v)
+				if err == nil {
+					text = string(b)
+				}
+			}
 			out.System = append(out.System, proxy.AnthropicSystemMessage{
 				Type: "text",
 				Text: text,

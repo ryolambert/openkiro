@@ -18,6 +18,7 @@ type Manager struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	running bool
+	done    chan struct{} // closed when the process exits
 }
 
 // NewManager creates a Manager with the given configuration.
@@ -25,12 +26,13 @@ func NewManager(cfg Config) *Manager {
 	return &Manager{cfg: cfg}
 }
 
-// Install installs the headroom-ai Python package using pip. It returns an
-// error if Python or pip is not available.
+// Install installs the headroom-ai Python package using pip via the configured
+// Python interpreter (`cfg.PythonBin -m pip install`). This ensures the package
+// is installed into the correct interpreter environment.
 func (m *Manager) Install(ctx context.Context) error {
-	pip := m.pipCommand()
-	//nolint:gosec // pip and cfg.PipPackage are developer-configured, not user input.
-	cmd := exec.CommandContext(ctx, pip, "install", m.cfg.PipPackage)
+	pythonBin := m.pythonBin()
+	//nolint:gosec // pythonBin and cfg.PipPackage are developer-configured, not user input.
+	cmd := exec.CommandContext(ctx, pythonBin, "-m", "pip", "install", m.cfg.PipPackage)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -84,13 +86,15 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	m.cmd = cmd
 	m.running = true
+	m.done = make(chan struct{})
 
-	// Wait for healthcheck in a separate goroutine-friendly manner.
+	// Monitor the process in the background and flip running=false on exit.
 	go func() {
 		_ = cmd.Wait()
 		m.mu.Lock()
 		m.running = false
 		m.mu.Unlock()
+		close(m.done)
 	}()
 
 	if err := m.waitHealthy(ctx); err != nil {
@@ -104,7 +108,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully stops the headroom proxy process.
+// Stop gracefully stops the headroom proxy process and waits for it to exit.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -121,6 +125,19 @@ func (m *Manager) stopLocked() error {
 			log.Printf("headroom: failed to kill process: %v (interrupt error: %v)", killErr, err)
 		}
 	}
+	// Wait for the process to exit (with a timeout) before flipping the flag.
+	// We must release the mutex before waiting, because the background
+	// goroutine from Start() needs it to set running=false and close done.
+	done := m.done
+	m.mu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = m.cmd.Process.Kill()
+		}
+	}
+	m.mu.Lock()
 	m.running = false
 	return nil
 }
@@ -132,37 +149,51 @@ func (m *Manager) Running() bool {
 	return m.running
 }
 
-// waitHealthy polls /health until success or timeout.
+// waitHealthy polls /health until success or timeout. Each individual health
+// check uses a short per-request timeout (1s or remaining deadline, whichever
+// is smaller) so a hanging connection cannot block past HealthTimeout.
 func (m *Manager) waitHealthy(ctx context.Context) error {
-	client := NewClient(m.cfg)
-
 	deadline := time.Now().Add(m.cfg.HealthTimeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+
+	const healthCheckTimeout = 1 * time.Second
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if time.Now().After(deadline) {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
 				return fmt.Errorf("headroom: proxy did not become healthy within %v", m.cfg.HealthTimeout)
 			}
-			if client.Healthy(ctx) {
+			// Use the shorter of healthCheckTimeout and remaining.
+			perCall := healthCheckTimeout
+			if remaining < perCall {
+				perCall = remaining
+			}
+			callCtx, callCancel := context.WithTimeout(ctx, perCall)
+			healthy := NewClient(m.cfg).Healthy(callCtx)
+			callCancel()
+			if healthy {
 				return nil
 			}
 		}
 	}
 }
 
-// pipCommand returns the pip binary name appropriate for the platform.
-func (m *Manager) pipCommand() string {
-	if runtime.GOOS == "windows" {
-		return "pip"
+// pythonBin returns the Python interpreter to use. It prefers cfg.PythonBin
+// and falls back to "python" on non-Windows systems if needed.
+func (m *Manager) pythonBin() string {
+	if _, err := exec.LookPath(m.cfg.PythonBin); err == nil {
+		return m.cfg.PythonBin
 	}
-	// Prefer pip3 on Unix; fall back to pip.
-	if _, err := exec.LookPath("pip3"); err == nil {
-		return "pip3"
+	if runtime.GOOS != "windows" {
+		if _, err := exec.LookPath("python"); err == nil {
+			return "python"
+		}
 	}
-	return "pip"
+	// Return configured bin even if not found — exec will produce a clear error.
+	return m.cfg.PythonBin
 }

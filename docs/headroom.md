@@ -67,17 +67,23 @@ headroom proxy --port 8787
 openkiro server
 ```
 
-The proxy will automatically detect and use headroom when the
-`HEADROOM_ENABLED` environment variable is set to `true` (or `1`),
-or when headroom middleware is configured in code.
+To use headroom with openkiro you must enable and configure the
+`HeadroomMiddleware` in your server setup (for example, in your Go proxy
+configuration). The openkiro proxy does **not** currently read any
+`HEADROOM_*` environment variables by itself; setting these variables alone
+will not cause headroom to be enabled.
 
 ## Configuration
 
+The following environment variables are **suggested conventions only**. They
+are not consumed directly by the openkiro proxy, but you can use them in your
+own configuration code to control how `HeadroomMiddleware` is initialized.
+
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `HEADROOM_ENABLED` | `false` | Enable headroom compression middleware |
-| `HEADROOM_HOST` | `127.0.0.1` | Host where headroom proxy is running |
-| `HEADROOM_PORT` | `8787` | Port where headroom proxy is running |
+| `HEADROOM_ENABLED` | `false` | Suggested flag you can read to enable headroom compression middleware |
+| `HEADROOM_HOST` | `127.0.0.1` | Suggested host variable for where your headroom proxy is running |
+| `HEADROOM_PORT` | `8787` | Suggested port variable for where your headroom proxy is running |
 
 ## Architecture
 

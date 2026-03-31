@@ -64,23 +64,16 @@ if ($pyMajor -lt 3 -or ($pyMajor -eq 3 -and $pyMinor -lt 10)) {
 
 Write-Host "Using Python $pyVer ($Python)"
 
-# ── pip detection ─────────────────────────────────────────────────────────────
-$Pip = $null
-foreach ($candidate in @('pip3', 'pip')) {
-    if (Get-Command $candidate -ErrorAction SilentlyContinue) {
-        $Pip = $candidate
-        break
-    }
-}
-
-if (-not $Pip) {
-    Write-Host 'pip not found, trying python -m pip...'
-    $Pip = "$Python -m pip"
+# ── Verify pip is available via the interpreter ───────────────────────────────
+$PipCheck = & $Python -m pip --version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "pip not available for $Python. Install pip first."
+    exit 1
 }
 
 # ── Install ───────────────────────────────────────────────────────────────────
 Write-Host "Installing $Package..."
-& $Pip install $Package
+& $Python -m pip install $Package
 
 # ── Verify ────────────────────────────────────────────────────────────────────
 if (Get-Command headroom -ErrorAction SilentlyContinue) {

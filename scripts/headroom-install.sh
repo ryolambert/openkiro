@@ -62,23 +62,15 @@ fi
 
 echo "Using Python $PY_VER ($PYTHON)"
 
-# ── pip detection ─────────────────────────────────────────────────────────────
-PIP=""
-for candidate in pip3 pip; do
-    if command -v "$candidate" &>/dev/null; then
-        PIP="$candidate"
-        break
-    fi
-done
-
-if [ -z "$PIP" ]; then
-    echo "pip not found, trying python -m pip..."
-    PIP="$PYTHON -m pip"
+# ── Verify pip is available via the interpreter ───────────────────────────────
+if ! "$PYTHON" -m pip --version &>/dev/null; then
+    echo "Error: pip not available for $PYTHON. Install pip first." >&2
+    exit 1
 fi
 
 # ── Install ───────────────────────────────────────────────────────────────────
 echo "Installing ${PACKAGE}..."
-$PIP install "$PACKAGE"
+"$PYTHON" -m pip install "$PACKAGE"
 
 # ── Verify ────────────────────────────────────────────────────────────────────
 if command -v headroom &>/dev/null; then
