@@ -89,8 +89,9 @@ func TestManager_StartWithoutBinary(t *testing.T) {
 		mgr.Stop()
 		t.Skip("headroom binary is available, skipping binary-not-found test")
 	}
-	if !mgr.Running() {
-		// Good — should not be running after failed start.
+	// Should not be running after a failed start.
+	if mgr.Running() {
+		t.Error("manager should not be running after failed Start()")
 	}
 }
 
