@@ -63,6 +63,43 @@ func TestHeadroomMiddleware_Disabled(t *testing.T) {
 	}
 }
 
+func TestHeadroomMiddleware_NilClient(t *testing.T) {
+	m := middleware.NewHeadroomMiddleware(nil, true)
+
+	req := &proxy.AnthropicRequest{
+		Model:    "claude-sonnet-4-5",
+		Messages: []proxy.AnthropicRequestMessage{{Role: "user", Content: "hello"}},
+	}
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != req {
+		t.Error("nil-client middleware should return the same pointer")
+	}
+}
+
+func TestHeadroomMiddleware_EmptyMessages(t *testing.T) {
+	srv := fakeHeadroomServer(t)
+	defer srv.Close()
+
+	client := headroom.NewClientWithURL(srv.URL, 5*time.Second)
+	m := middleware.NewHeadroomMiddleware(client, true)
+
+	req := &proxy.AnthropicRequest{
+		Model:    "claude-sonnet-4-5",
+		Messages: nil,
+	}
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No messages → passthrough
+	if got != req {
+		t.Error("empty-messages request should be returned as-is")
+	}
+}
+
 func TestHeadroomMiddleware_ProcessRequest(t *testing.T) {
 	srv := fakeHeadroomServer(t)
 	defer srv.Close()
@@ -95,6 +132,62 @@ func TestHeadroomMiddleware_ProcessRequest(t *testing.T) {
 	}
 }
 
+func TestHeadroomMiddleware_MultipleSystemMessages(t *testing.T) {
+	srv := fakeHeadroomServer(t)
+	defer srv.Close()
+
+	client := headroom.NewClientWithURL(srv.URL, 5*time.Second)
+	m := middleware.NewHeadroomMiddleware(client, true)
+
+	req := &proxy.AnthropicRequest{
+		Model: "claude-sonnet-4-5",
+		System: []proxy.AnthropicSystemMessage{
+			{Type: "text", Text: "First system message."},
+			{Type: "text", Text: "Second system message."},
+		},
+		Messages: []proxy.AnthropicRequestMessage{
+			{Role: "user", Content: "hello"},
+		},
+	}
+
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.System) == 0 {
+		t.Error("expected system messages after compression round-trip")
+	}
+}
+
+func TestHeadroomMiddleware_ComplexContentBlocks(t *testing.T) {
+	srv := fakeHeadroomServer(t)
+	defer srv.Close()
+
+	client := headroom.NewClientWithURL(srv.URL, 5*time.Second)
+	m := middleware.NewHeadroomMiddleware(client, true)
+
+	// Use content blocks (non-string Content) to exercise messageContent's
+	// JSON-marshal path.
+	blocks := []map[string]any{
+		{"type": "text", "text": "Analyze this code"},
+		{"type": "tool_result", "tool_use_id": "t1", "content": "result data"},
+	}
+	req := &proxy.AnthropicRequest{
+		Model: "claude-sonnet-4-5",
+		Messages: []proxy.AnthropicRequestMessage{
+			{Role: "user", Content: blocks},
+		},
+	}
+
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Messages) == 0 {
+		t.Error("expected at least 1 message")
+	}
+}
+
 func TestHeadroomMiddleware_FallbackOnError(t *testing.T) {
 	// Closed server → connection error → should fall back gracefully.
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -118,6 +211,47 @@ func TestHeadroomMiddleware_FallbackOnError(t *testing.T) {
 	}
 	if len(got.Messages) != 1 {
 		t.Errorf("expected 1 message, got %d", len(got.Messages))
+	}
+}
+
+func TestHeadroomMiddleware_FallbackOnEmptyCompressedMessages(t *testing.T) {
+	// Server returns an empty message list → middleware should fall back to
+	// the original request messages.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := headroom.CompressResponse{
+			Messages:     nil, // empty
+			TokensBefore: 100,
+			TokensAfter:  0,
+			TokensSaved:  100,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := headroom.NewClientWithURL(srv.URL, 5*time.Second)
+	m := middleware.NewHeadroomMiddleware(client, true)
+
+	req := &proxy.AnthropicRequest{
+		Model: "claude-sonnet-4-5",
+		System: []proxy.AnthropicSystemMessage{
+			{Type: "text", Text: "system prompt"},
+		},
+		Messages: []proxy.AnthropicRequestMessage{
+			{Role: "user", Content: "important question"},
+		},
+	}
+
+	got, err := m.ProcessRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should fall back to originals.
+	if len(got.Messages) != 1 {
+		t.Errorf("expected 1 original message, got %d", len(got.Messages))
+	}
+	if len(got.System) != 1 {
+		t.Errorf("expected 1 original system message, got %d", len(got.System))
 	}
 }
 

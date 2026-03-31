@@ -94,7 +94,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	}()
 
 	if err := m.waitHealthy(ctx); err != nil {
-		m.stopLocked()
+		if stopErr := m.stopLocked(); stopErr != nil {
+			log.Printf("headroom: failed to stop after health-check failure: %v", stopErr)
+		}
 		return err
 	}
 
