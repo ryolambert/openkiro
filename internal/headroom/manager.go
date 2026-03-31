@@ -119,9 +119,10 @@ func (m *Manager) stopLocked() error {
 	if !m.running || m.cmd == nil || m.cmd.Process == nil {
 		return nil
 	}
-	if err := m.cmd.Process.Signal(os.Interrupt); err != nil {
+	proc := m.cmd.Process
+	if err := proc.Signal(os.Interrupt); err != nil {
 		// If interrupt fails (e.g. Windows), kill forcefully.
-		if killErr := m.cmd.Process.Kill(); killErr != nil {
+		if killErr := proc.Kill(); killErr != nil {
 			log.Printf("headroom: failed to kill process: %v (interrupt error: %v)", killErr, err)
 		}
 	}
@@ -134,10 +135,12 @@ func (m *Manager) stopLocked() error {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			_ = m.cmd.Process.Kill()
+			_ = proc.Kill()
 		}
 	}
 	m.mu.Lock()
+	// The background goroutine should have set running=false by now, but
+	// ensure it's false in case the goroutine hasn't run yet.
 	m.running = false
 	return nil
 }
