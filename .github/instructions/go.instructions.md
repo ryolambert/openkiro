@@ -15,6 +15,18 @@ applyTo: "**/*.go"
 - Use `errors.Is()` and `errors.As()` for error inspection, not string matching
 - Return early on error; keep the happy path un-indented
 
+```go
+// Avoid
+if err != nil {
+    return err // missing context
+}
+
+// Prefer
+if err != nil {
+    return fmt.Errorf("buildRequest: %w", err)
+}
+```
+
 ## Naming
 - Package names: short, lowercase, singular (`proxy`, `token`, `middleware`)
 - Interfaces: verb or -er suffix (`Middleware`, `Flusher`), not `IMiddleware`
@@ -32,6 +44,15 @@ applyTo: "**/*.go"
 - Debug output: `token.DebugLogf()` — gated by `OPENKIRO_DEBUG` env var
 - Errors/warnings only: `log.Printf()`
 - Never log full tokens or credentials; use `token.RedactToken()` for partial display
+
+```go
+// Avoid
+log.Printf("token: %s", fullToken)
+
+// Prefer
+log.Printf("token: %s", token.RedactToken(fullToken)) // shows "tok12345...wxyz"
+token.DebugLogf("detail: %v", val) // only printed when OPENKIRO_DEBUG=1
+```
 
 ## Dependencies
 - Stdlib only — no third-party packages unless absolutely unavoidable
