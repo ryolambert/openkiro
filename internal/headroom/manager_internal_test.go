@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -262,15 +264,19 @@ func TestManager_DirectFieldAccess(t *testing.T) {
 }
 
 func TestStartAndStop_Integration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration test requires Unix signals")
+	}
+
 	// Build a tiny Go binary to act as a fake headroom proxy.
 	tmpDir := t.TempDir()
 
-	srcFile := tmpDir + "/fakeheadroom.go"
+	srcFile := filepath.Join(tmpDir, "fakeheadroom.go")
 	if err := os.WriteFile(srcFile, []byte(fakeHeadroomSrc), 0o644); err != nil {
 		t.Fatalf("write fake source: %v", err)
 	}
 
-	binPath := tmpDir + "/headroom"
+	binPath := filepath.Join(tmpDir, "headroom")
 	build := exec.Command("go", "build", "-o", binPath, srcFile)
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
@@ -286,7 +292,7 @@ func TestStartAndStop_Integration(t *testing.T) {
 	ln.Close()
 
 	// Put our fake binary on PATH.
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	t.Setenv("PATH", tmpDir+string(filepath.ListSeparator)+os.Getenv("PATH"))
 
 	cfg := DefaultConfig()
 	cfg.Port = port
