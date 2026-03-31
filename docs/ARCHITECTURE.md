@@ -89,7 +89,7 @@ cmd/mcp-gateway → internal/gateway (MCP server discovery)
 | `internal/headroom/manager.go` | headroom | Python process lifecycle (install, start, stop, health) |
 | `internal/headroom/client.go` | headroom | HTTP client for headroom proxy communication |
 | `internal/headroom/config.go` | headroom | Configuration defaults and validation |
-| `internal/daemon/daemon.go` | daemon | PID files, log rotation, launchd plist, Claude config |
+| `internal/daemon/daemon.go` | daemon | PID files, launchd plist, Claude config |
 | `internal/daemon/alias.go` | daemon | Shell alias/function generation (bash, zsh, PowerShell, cmd) |
 | `internal/sandbox/sandbox.go` | sandbox | Docker container create/start/stop/destroy/list |
 | `internal/sandbox/agent.go` | sandbox | Preset configs: Default, Agent, ClaudeCode, Kiro |
@@ -161,18 +161,15 @@ CodeWhisperer returns a custom binary event-stream (not standard SSE). Each fram
 ├─────────────────────────────────────────────────────┤
 │  Header byte length (4 bytes, big-endian)           │
 ├─────────────────────────────────────────────────────┤
-│  Prelude CRC (4 bytes)                              │
-├─────────────────────────────────────────────────────┤
-│  Headers (variable length, key-value pairs)         │
-│    `:event-type` → event name                       │
-│    `:content-type` → MIME type                      │
-│    `:message-type` → "event" | "exception"          │
+│  Headers (variable length, opaque to the parser)    │
 ├─────────────────────────────────────────────────────┤
 │  Payload (variable length, JSON)                    │
 ├─────────────────────────────────────────────────────┤
-│  Message CRC (4 bytes)                              │
+│  Trailing CRC (4 bytes, read but not validated)     │
 └─────────────────────────────────────────────────────┘
 ```
+
+> **Note:** The current `protocol.ParseEventStream` implementation reads the header bytes but does not interpret individual header key-value pairs (e.g., `:event-type`). Instead, it infers the event type from the JSON payload content. CRC fields are read to advance the reader but are not validated.
 
 ### Anthropic SSE Output Format
 
@@ -286,10 +283,9 @@ token.DebugLogBodySummary(label, body)     // log body size + first N chars
 ### Upstream HTTP Client
 
 `token.GetUpstreamClient()` returns a shared `*http.Client` with:
-- 60-second timeout
-- Connection pooling (100 max idle, 10 per host)
-- TLS handshake timeout: 10s
-- Idle connection timeout: 90s
+- 60-second timeout (`UpstreamHTTPTimeout`)
+- Connection pooling (`MaxIdleConnsPerHost: 10`)
+- Idle connection timeout: 90s (`IdleConnTimeout`)
 
 ---
 
@@ -299,14 +295,14 @@ token.DebugLogBodySummary(label, body)     // log body size + first N chars
 
 ### Resolution Strategy
 
-1. **Exact match** — look up in `ModelMap` (case-insensitive)
+1. **Exact match** — look up in `ModelMap` (case-insensitive, including the literal alias `"default"` → `ModelSonnet45`)
 2. **Passthrough** — if prefixed with `claude_` (uppercase), pass as-is
 3. **Fuzzy match** — keyword-based fallback:
    - Contains "sonnet" + "4-5" or "4.5" → `ModelSonnet45`
    - Contains "sonnet" → `ModelSonnet46`
    - Contains "opus" → `ModelOpus46`
    - Contains "haiku" → `ModelHaiku45`
-4. **Default** — `ModelSonnet46`
+4. **Empty/unknown** — when `requested` is `""` or no rule above matches, `ResolveModelID` falls back to `ModelSonnet46`
 
 ### Current Model Constants
 
@@ -338,7 +334,7 @@ Create (docker create) → Start (docker start) → [Use] → Stop (docker stop)
 | `DefaultConfig()` | none | read-only | — |
 | `AgentConfig()` | bridge | read-only | — |
 | `ClaudeCodeConfig()` | bridge | read-only | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY` |
-| `KiroConfig()` | bridge | read-only | `ANTHROPIC_BASE_URL`, `KIRO_PROXY` |
+| `KiroConfig()` | bridge | read-only | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `KIRO_PROXY` |
 
 ### Sandbox Images
 
@@ -411,7 +407,7 @@ mgr.Stop()       // graceful shutdown via done channel
 1. **Network isolation** — `127.0.0.1` binding by default; warning logged if overridden
 2. **Request size limits** — 200 MiB `MaxBytesReader` on all request bodies
 3. **Server timeouts** — Read: 30s, Write: 60s, Idle: 120s, Header: 10s
-4. **Panic recovery** — Generic `{"error":"Internal server error"}` response; stack traces in logs only
+4. **Panic recovery** — Generic `{"error":{"type":"server_error","message":"Internal server error"}}` response; recovered value logged (no stack trace)
 5. **Token redaction** — Only first 8 + last 4 characters shown in any log output
 6. **Credential file permissions** — `0600` on `~/.openkiro/credentials.json`
 7. **No credential baking** — Docker images never contain tokens; injected at runtime
@@ -597,10 +593,10 @@ The streaming handler retries up to 3 times:
 
 ### Connection Pooling
 
-`token.GetUpstreamClient()` returns a singleton `*http.Client` with:
-- `MaxIdleConns: 100`
+`token.GetUpstreamClient()` returns a singleton `*http.Client` configured with:
 - `MaxIdleConnsPerHost: 10`
 - `IdleConnTimeout: 90s`
+- a request-level timeout of 60s via `http.Client.Timeout`
 
 ### Streaming Efficiency
 
@@ -626,7 +622,7 @@ The streaming handler retries up to 3 times:
 | Token path | `~/.aws/sso/cache/kiro-auth-token.json` | `%USERPROFILE%\.aws\sso\cache\kiro-auth-token.json` |
 | Daemon | launchd plist | Windows Service Manager |
 | Shell aliases | bash/zsh functions | PowerShell/cmd set commands |
-| Credential perms | `os.Chmod(path, 0600)` | ACLs (best effort) |
+| Credential perms | `os.WriteFile(..., 0600)` | `os.WriteFile(..., 0600)` (no explicit ACLs) |
 | Build | `CGO_ENABLED=0` | `CGO_ENABLED=0` |
 
 ### Build Tags

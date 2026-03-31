@@ -8,7 +8,7 @@ applyTo: "Dockerfile*"
 - Prefer `gcr.io/distroless/static-debian12:nonroot` or Alpine 3.20 for runtime
 - Always use `CGO_ENABLED=0` for static binaries
 - Set `--trimpath` in go build for reproducible builds
-- Run as non-root user (UID 1000) — never as root
+- Run as a non-root user (UID varies by base image) — never as root
 - Include `HEALTHCHECK` instructions where applicable
 
 ## Sandbox Architecture
