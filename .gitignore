@@ -3,6 +3,10 @@
 /kiro-claude-proxy.exe
 /openkiro
 /openkiro.exe
+/headroom
+/icm
+/mcp-gateway
+/rtk
 bin/
 
 # GoReleaser
