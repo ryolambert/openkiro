@@ -31,6 +31,13 @@ var (
 	date    = "unknown"
 )
 
+const openkiroBanner = ` ██████╗ ██████╗ ███████╗███╗   ██╗██╗  ██╗██╗██████╗  ██████╗
+██╔═══██╗██╔══██╗██╔════╝████╗  ██║██║ ██╔╝██║██╔══██╗██╔═══██╗
+██║   ██║██████╔╝█████╗  ██╔██╗ ██║█████╔╝ ██║██████╔╝██║   ██║
+██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔═██╗ ██║██╔══██╗██║   ██║
+╚██████╔╝██║     ███████╗██║ ╚████║██║  ██╗██║██║  ██║╚██████╔╝
+ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝`
+
 func main() {
 	args := os.Args[1:]
 
@@ -234,7 +241,9 @@ func requireID(subcmd string, args []string) string {
 }
 
 func printUsage() {
-	fmt.Print(`openkiro - Anthropic API proxy for Kiro/AWS CodeWhisperer
+	fmt.Printf(`%s
+
+openkiro - Anthropic API proxy for Kiro/AWS CodeWhisperer
 
 Usage:
   openkiro server [port]       Start the proxy server (default port 1234).
@@ -244,11 +253,13 @@ Usage:
   openkiro help                Show this help message.
 
 Run 'openkiro sandbox help' for sandbox sub-commands.
-`)
+`, openkiroBanner)
 }
 
 func printSandboxUsage() {
-	fmt.Print(`openkiro sandbox — manage ephemeral agent sandbox containers
+	fmt.Printf(`%s
+
+openkiro sandbox — manage ephemeral agent sandbox containers
 
 Sub-commands:
   create --id ID [flags]    Create and start a sandbox container.
@@ -276,6 +287,5 @@ Examples:
   openkiro sandbox create --id dev-session --preset claude --workspace /my/project
   openkiro sandbox list
   openkiro sandbox destroy dev-session
-`)
+`, openkiroBanner)
 }
-
