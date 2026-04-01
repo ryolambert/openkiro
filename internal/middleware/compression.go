@@ -43,7 +43,10 @@ type DefaultCompressor struct {
 	MaxLineLen int
 }
 
-// ansiPattern matches ANSI escape sequences (CSI, OSC, and simple ESC codes).
+// ansiPattern matches ANSI escape sequences. It covers three categories:
+//   - CSI (Control Sequence Introducer): \x1b[<params><letter> — e.g. \x1b[31m (color)
+//   - OSC (Operating System Command): \x1b]<payload><BEL or ST> — e.g. terminal titles
+//   - Simple ESC codes: \x1b<char> — e.g. \x1bM (reverse linefeed)
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x1b\x07]*(?:\x07|\x1b\\)|\x1b[^[\]()]`)
 
 // Compress applies all text filters and returns the compressed result.
@@ -239,6 +242,19 @@ func (c *CompressionMiddleware) ProcessRequest(req *proxy.AnthropicRequest) (*pr
 	return &out, nil
 }
 
+// copyStringMap creates a shallow copy of a map[string]interface{}. This is
+// sufficient for content block maps where values are primitives (strings,
+// numbers, bools) or are replaced entirely (e.g. the "content" or "text"
+// field). Nested reference types beyond "content" are shared with the
+// original; this is acceptable because only string fields are modified.
+func copyStringMap(src map[string]interface{}) map[string]interface{} {
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 // compressBlocks processes a slice of content blocks (as []interface{}) and
 // compresses eligible tool_result text fields. It returns the modified blocks,
 // total tokens before/after compression, and the number of blocks compressed.
@@ -263,10 +279,7 @@ func (c *CompressionMiddleware) compressBlocks(blocks []interface{}) ([]interfac
 		}
 
 		// Copy the block map to avoid mutating the original.
-		blockCopy := make(map[string]interface{}, len(block))
-		for k, v := range block {
-			blockCopy[k] = v
-		}
+		blockCopy := copyStringMap(block)
 
 		changed := false
 
@@ -315,10 +328,7 @@ func (c *CompressionMiddleware) compressBlocks(blocks []interface{}) ([]interfac
 						after := c.compressor.Compress(text)
 						afterTokens := estimateTokens(after)
 						if afterTokens < before {
-							subCopy := make(map[string]interface{}, len(subBlock))
-							for k, v := range subBlock {
-								subCopy[k] = v
-							}
+							subCopy := copyStringMap(subBlock)
 							subCopy["text"] = after
 							nestedCopy[j] = subCopy
 							totalBefore += before
