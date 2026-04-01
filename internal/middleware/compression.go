@@ -1,10 +1,12 @@
 package middleware
 
 import (
-	"fmt"
+	"bytes"
+	"context"
 	"math"
-	"regexp"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/ryolambert/openkiro/internal/proxy"
 	"github.com/ryolambert/openkiro/internal/token"
@@ -14,12 +16,13 @@ import (
 // Anthropic and OpenAI tokenizers. Matches the constant in cmd/rtk/main.go.
 const charsPerToken = 4
 
-// DefaultMaxLineLen is the maximum line length before truncation.
-const DefaultMaxLineLen = 500
-
 // DefaultTokenThreshold is the minimum estimated token count a content block
 // must reach before compression is applied.
 const DefaultTokenThreshold = 200
+
+// defaultRtkTimeout is the maximum time allowed for a single rtk subprocess
+// invocation before the context is cancelled.
+const defaultRtkTimeout = 10 * time.Second
 
 // Compressor compresses a text string and returns the compressed version.
 // Implementations must be safe for concurrent use.
@@ -27,103 +30,97 @@ type Compressor interface {
 	Compress(text string) string
 }
 
-// DefaultCompressor applies a chain of pure-Go text filters to reduce token
-// count without losing semantic content. It is safe for concurrent use because
-// all operations are stateless.
-//
-// Filters applied in order:
-//  1. Strip ANSI escape codes
-//  2. Strip trailing whitespace from every line
-//  3. Collapse consecutive blank lines into a single blank line
-//  4. Deduplicate consecutive identical lines (e.g. "line\nline\nline" → "line (×3)")
-//  5. Truncate lines exceeding MaxLineLen characters
-type DefaultCompressor struct {
-	// MaxLineLen is the maximum number of characters per line before
-	// truncation. Zero means use DefaultMaxLineLen.
-	MaxLineLen int
+// RtkCompressor delegates text compression to the rtk binary (rtk-ai/rtk).
+// If the binary is not found on $PATH, Compress returns text unchanged.
+type RtkCompressor struct {
+	binaryPath string // resolved via exec.LookPath; empty means unavailable
+	timeout    time.Duration
 }
 
-// ansiPattern matches ANSI escape sequences. It covers three categories:
-//   - CSI (Control Sequence Introducer): \x1b[<params><letter> — e.g. \x1b[31m (color)
-//   - OSC (Operating System Command): \x1b]<payload><BEL or ST> — e.g. terminal titles
-//   - Simple ESC codes: \x1b<char> — e.g. \x1bM (reverse linefeed)
-var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x1b\x07]*(?:\x07|\x1b\\)|\x1b[^[\]()]`)
+// resolveRtkBinary locates the rtk binary on $PATH and verifies it is the
+// Rust rtk-ai/rtk binary (not the Go cmd/rtk shim). It returns the resolved
+// path, or empty string if the binary is not found or is the wrong one.
+func resolveRtkBinary() string {
+	path, err := exec.LookPath("rtk")
+	if err != nil {
+		return ""
+	}
 
-// Compress applies all text filters and returns the compressed result.
-func (d *DefaultCompressor) Compress(text string) string {
+	// Verify this is the Rust rtk-ai/rtk binary by checking --version output.
+	// The Go cmd/rtk tool prints "openkiro token compression toolkit" while
+	// the Rust binary prints something like "rtk 0.34.2".
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	//nolint:gosec // path is resolved via LookPath, not user input.
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return ""
+	}
+
+	version := strings.ToLower(strings.TrimSpace(string(out)))
+	// The Rust binary outputs "rtk <version>"; the Go shim mentions "openkiro".
+	if strings.Contains(version, "openkiro") {
+		return ""
+	}
+	if !strings.Contains(version, "rtk") {
+		return ""
+	}
+
+	return path
+}
+
+// NewRtkCompressor creates an RtkCompressor that delegates to the rtk binary.
+// If the rtk binary is not found or is the wrong variant, the compressor
+// operates in passthrough mode (Compress returns text unchanged).
+func NewRtkCompressor() *RtkCompressor {
+	return &RtkCompressor{
+		binaryPath: resolveRtkBinary(),
+		timeout:    defaultRtkTimeout,
+	}
+}
+
+// Available reports whether the rtk binary was found and verified at
+// construction time.
+func (r *RtkCompressor) Available() bool {
+	return r.binaryPath != ""
+}
+
+// Compress runs the text through `rtk read --level minimal` via subprocess and
+// returns the compressed output. On ANY error (binary not found, timeout,
+// non-zero exit, etc.) the original text is returned unchanged (graceful
+// degradation).
+func (r *RtkCompressor) Compress(text string) string {
 	if text == "" {
 		return text
 	}
-
-	maxLen := d.MaxLineLen
-	if maxLen <= 0 {
-		maxLen = DefaultMaxLineLen
+	if r.binaryPath == "" {
+		return text
 	}
 
-	// 1. Strip ANSI escape codes.
-	text = ansiPattern.ReplaceAllString(text, "")
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	defer cancel()
 
-	lines := strings.Split(text, "\n")
+	//nolint:gosec // binaryPath is resolved via LookPath at construction time.
+	cmd := exec.CommandContext(ctx, r.binaryPath, "read", "--level", "minimal")
+	cmd.Stdin = strings.NewReader(text)
 
-	// 2. Strip trailing whitespace from every line.
-	for i, line := range lines {
-		lines[i] = strings.TrimRight(line, " \t\r")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		token.DebugLogf("rtk compress error: %v (stderr: %s)", err, stderr.String())
+		return text
 	}
 
-	// 3. Collapse consecutive blank lines into a single blank line.
-	lines = collapseBlankLines(lines)
-
-	// 4. Deduplicate consecutive identical lines.
-	lines = deduplicateLines(lines)
-
-	// 5. Truncate long lines.
-	for i, line := range lines {
-		if len(line) > maxLen {
-			lines[i] = line[:maxLen] + "…[truncated]"
-		}
+	result := stdout.String()
+	if result == "" {
+		// If rtk returned empty output, keep the original to avoid data loss.
+		return text
 	}
 
-	return strings.Join(lines, "\n")
-}
-
-// collapseBlankLines reduces runs of consecutive blank lines to a single blank
-// line.
-func collapseBlankLines(lines []string) []string {
-	out := make([]string, 0, len(lines))
-	prevBlank := false
-	for _, line := range lines {
-		blank := strings.TrimSpace(line) == ""
-		if blank && prevBlank {
-			continue
-		}
-		out = append(out, line)
-		prevBlank = blank
-	}
-	return out
-}
-
-// deduplicateLines replaces runs of N consecutive identical lines with a
-// single line annotated with " (×N)".
-func deduplicateLines(lines []string) []string {
-	if len(lines) == 0 {
-		return lines
-	}
-	out := make([]string, 0, len(lines))
-	i := 0
-	for i < len(lines) {
-		j := i + 1
-		for j < len(lines) && lines[j] == lines[i] {
-			j++
-		}
-		count := j - i
-		if count > 1 {
-			out = append(out, fmt.Sprintf("%s (×%d)", lines[i], count))
-		} else {
-			out = append(out, lines[i])
-		}
-		i = j
-	}
-	return out
+	return result
 }
 
 // estimateTokens returns a rough token count using the 4 chars/token heuristic.
@@ -136,7 +133,7 @@ func estimateTokens(s string) int {
 }
 
 // CompressionMiddleware compresses tool_result content blocks in Anthropic
-// requests using pure-Go text filters. It implements the Middleware interface.
+// requests using the rtk binary subprocess. It implements the Middleware interface.
 //
 // Only content blocks whose estimated token count meets or exceeds the
 // configured threshold are compressed. When disabled or when compression
@@ -172,7 +169,7 @@ func WithThreshold(n int) CompressionOption {
 // token threshold.
 func NewCompressionMiddleware(enabled bool, opts ...CompressionOption) *CompressionMiddleware {
 	m := &CompressionMiddleware{
-		compressor: &DefaultCompressor{},
+		compressor: NewRtkCompressor(),
 		threshold:  DefaultTokenThreshold,
 		enabled:    enabled,
 	}
@@ -356,3 +353,9 @@ func (c *CompressionMiddleware) compressBlocks(blocks []interface{}) ([]interfac
 func (c *CompressionMiddleware) ProcessResponse(resp []byte) ([]byte, error) {
 	return resp, nil
 }
+
+// Ensure RtkCompressor satisfies the Compressor interface at compile time.
+var _ Compressor = (*RtkCompressor)(nil)
+
+// Ensure CompressionMiddleware satisfies the Middleware interface at compile time.
+var _ Middleware = (*CompressionMiddleware)(nil)

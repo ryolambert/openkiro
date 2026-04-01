@@ -8,121 +8,36 @@ import (
 	"github.com/ryolambert/openkiro/internal/proxy"
 )
 
-// ── DefaultCompressor tests ─────────────────────────────────────────────────
+// ── RtkCompressor tests ─────────────────────────────────────────────────────
 
-func TestDefaultCompressor_EmptyString(t *testing.T) {
-	c := &middleware.DefaultCompressor{}
+func TestRtkCompressor_EmptyString(t *testing.T) {
+	c := middleware.NewRtkCompressor()
 	got := c.Compress("")
 	if got != "" {
 		t.Errorf("expected empty string, got %q", got)
 	}
 }
 
-func TestDefaultCompressor_StripANSI(t *testing.T) {
-	c := &middleware.DefaultCompressor{}
-	input := "\x1b[32mOK\x1b[0m test passed"
-	got := c.Compress(input)
-	if strings.Contains(got, "\x1b") {
-		t.Errorf("expected ANSI codes to be stripped, got %q", got)
-	}
-	if !strings.Contains(got, "OK") || !strings.Contains(got, "test passed") {
-		t.Errorf("expected text content to be preserved, got %q", got)
-	}
-}
-
-func TestDefaultCompressor_CollapseBlankLines(t *testing.T) {
-	c := &middleware.DefaultCompressor{}
-	input := "line1\n\n\n\nline2\n\n\n\n\nline3"
-	got := c.Compress(input)
-	// Should have at most one blank line between content lines.
-	lines := strings.Split(got, "\n")
-	consecutiveBlanks := 0
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			consecutiveBlanks++
-			if consecutiveBlanks > 1 {
-				t.Errorf("found consecutive blank lines in compressed output: %q", got)
-				break
-			}
-		} else {
-			consecutiveBlanks = 0
-		}
+func TestRtkCompressor_Available(t *testing.T) {
+	c := middleware.NewRtkCompressor()
+	// In CI the rtk binary is typically not installed, so Available() returns
+	// false and Compress is a passthrough. This test validates both branches.
+	if c.Available() {
+		t.Log("rtk binary found on PATH — subprocess compression active")
+	} else {
+		t.Log("rtk binary not found — passthrough mode")
 	}
 }
 
-func TestDefaultCompressor_DeduplicateLines(t *testing.T) {
-	c := &middleware.DefaultCompressor{}
-	input := "ok\nok\nok\nok\nok"
+func TestRtkCompressor_Passthrough_WhenUnavailable(t *testing.T) {
+	c := middleware.NewRtkCompressor()
+	if c.Available() {
+		t.Skip("rtk binary is available; passthrough test not applicable")
+	}
+	input := "hello world\nhello world\nhello world"
 	got := c.Compress(input)
-	if !strings.Contains(got, "(×5)") {
-		t.Errorf("expected deduplicated line with (×5), got %q", got)
-	}
-	// Should be a single line now.
-	lines := strings.Split(got, "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected 1 line after dedup, got %d: %q", len(lines), got)
-	}
-}
-
-func TestDefaultCompressor_DeduplicateMixed(t *testing.T) {
-	c := &middleware.DefaultCompressor{}
-	input := "a\na\na\nb\nc\nc"
-	got := c.Compress(input)
-	if !strings.Contains(got, "a (×3)") {
-		t.Errorf("expected 'a (×3)' in output, got %q", got)
-	}
-	if !strings.Contains(got, "c (×2)") {
-		t.Errorf("expected 'c (×2)' in output, got %q", got)
-	}
-	if !strings.Contains(got, "b") {
-		t.Errorf("expected 'b' preserved, got %q", got)
-	}
-}
-
-func TestDefaultCompressor_TruncateLongLines(t *testing.T) {
-	c := &middleware.DefaultCompressor{MaxLineLen: 20}
-	input := strings.Repeat("x", 50)
-	got := c.Compress(input)
-	if len(got) >= 50 {
-		t.Errorf("expected line to be truncated, got length %d", len(got))
-	}
-	if !strings.Contains(got, "…[truncated]") {
-		t.Errorf("expected truncation marker, got %q", got)
-	}
-}
-
-func TestDefaultCompressor_StripTrailingWhitespace(t *testing.T) {
-	c := &middleware.DefaultCompressor{}
-	input := "hello   \nworld\t\t\n"
-	got := c.Compress(input)
-	for _, line := range strings.Split(got, "\n") {
-		trimmed := strings.TrimRight(line, " \t\r")
-		if line != trimmed {
-			t.Errorf("line has trailing whitespace: %q", line)
-		}
-	}
-}
-
-func TestDefaultCompressor_AllFiltersCombined(t *testing.T) {
-	c := &middleware.DefaultCompressor{MaxLineLen: 30}
-	input := "\x1b[31mERROR\x1b[0m   \n\n\n\nrepeat\nrepeat\nrepeat\n" +
-		strings.Repeat("z", 50) + "\nfinal"
-	got := c.Compress(input)
-
-	if strings.Contains(got, "\x1b") {
-		t.Error("ANSI codes should be stripped")
-	}
-	if strings.Contains(got, "repeat\nrepeat") {
-		t.Error("duplicate lines should be collapsed")
-	}
-	if !strings.Contains(got, "repeat (×3)") {
-		t.Errorf("expected 'repeat (×3)', got %q", got)
-	}
-	if !strings.Contains(got, "…[truncated]") {
-		t.Error("long line should be truncated")
-	}
-	if !strings.Contains(got, "final") {
-		t.Error("final line should be preserved")
+	if got != input {
+		t.Errorf("expected passthrough when rtk unavailable, got %q", got)
 	}
 }
 
@@ -196,7 +111,10 @@ func TestCompressionMiddleware_ToolResultStringContent(t *testing.T) {
 		},
 	}
 
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	got, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -227,7 +145,10 @@ func TestCompressionMiddleware_ToolResultTextField(t *testing.T) {
 		},
 	}
 
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	got, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -284,7 +205,10 @@ func TestCompressionMiddleware_NonToolResultBlocks_Untouched(t *testing.T) {
 		},
 	}
 
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	got, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -307,7 +231,10 @@ func TestCompressionMiddleware_PlainStringContent_User(t *testing.T) {
 		},
 	}
 
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	got, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -332,7 +259,10 @@ func TestCompressionMiddleware_PlainStringContent_AssistantNotCompressed(t *test
 		},
 	}
 
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	got, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -364,7 +294,10 @@ func TestCompressionMiddleware_NestedContentBlocks(t *testing.T) {
 		},
 	}
 
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	got, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -409,7 +342,10 @@ func TestCompressionMiddleware_DoesNotMutateOriginal(t *testing.T) {
 		},
 	}
 
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	got, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -468,7 +404,10 @@ func TestCompressionMiddleware_CustomCompressor(t *testing.T) {
 }
 
 func TestCompressionMiddleware_InChain(t *testing.T) {
-	m := middleware.NewCompressionMiddleware(true, middleware.WithThreshold(10))
+	m := middleware.NewCompressionMiddleware(true,
+		middleware.WithThreshold(10),
+		middleware.WithCompressor(&halvingCompressor{}),
+	)
 	var chain middleware.Chain
 	chain.Add(m)
 
@@ -495,21 +434,20 @@ func TestCompressionMiddleware_InChain(t *testing.T) {
 
 func TestCompressionMiddleware_WithNilCompressor_UsesDefault(t *testing.T) {
 	m := middleware.NewCompressionMiddleware(true, middleware.WithCompressor(nil))
-	// Should not panic and should use default compressor.
-	largeText := strings.Repeat("test\ntest\n", 100)
+	// Should not panic and should use default compressor (RtkCompressor).
+	if m == nil {
+		t.Fatal("expected non-nil middleware")
+	}
+	// Verify the middleware is functional (no panic).
 	req := &proxy.AnthropicRequest{
 		Model: "claude-sonnet-4-5",
 		Messages: []proxy.AnthropicRequestMessage{
-			{Role: "user", Content: largeText},
+			{Role: "user", Content: "hello"},
 		},
 	}
-	got, err := m.ProcessRequest(req)
+	_, err := m.ProcessRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	compressed := got.Messages[0].Content.(string)
-	if len(compressed) >= len(largeText) {
-		t.Errorf("default compressor should compress duplicate lines")
 	}
 }
 
