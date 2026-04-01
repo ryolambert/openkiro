@@ -42,7 +42,7 @@ func main() {
 			}
 			if count > 0 {
 				fmt.Printf("%s (x%d)\n", prev, count+1)
-			} else if prev != "" || count > 0 {
+			} else if prev != "" {
 				fmt.Println(prev)
 			}
 			prev = line
