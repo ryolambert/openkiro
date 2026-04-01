@@ -10,7 +10,7 @@ Author: Copilot Agent (feasibility analysis)
 
 This document evaluates the feasibility of integrating
 [rtk-ai/rtk](https://github.com/rtk-ai/rtk) — a Rust-based CLI proxy that
-reduces LLM token consumption by 60–90 % — into the openkiro repository.
+reduces LLM token consumption by 60–90% — into the openkiro repository.
 
 **Verdict: HIGH feasibility.** The integration is achievable through two
 complementary strategies that align with openkiro's existing architecture:
@@ -36,7 +36,7 @@ without violating the zero-dependency constraint.
 | Supported commands | 100+ (git, cargo, npm, go, docker, etc.) |
 | Compression strategy | Smart filtering, grouping, truncation, deduplication |
 | Overhead per command | < 10 ms |
-| Token savings | 60–90 % on typical CLI output |
+| Token savings | 60–90% on typical CLI output |
 | Tracking | SQLite-backed history of per-command token savings |
 | Install methods | Homebrew, cargo install, curl script, pre-built binaries |
 | Platforms | macOS (x86/ARM), Linux (x86/ARM), Windows (x86) |
@@ -256,9 +256,9 @@ user experience across all deployment modes.
 |-----------|---------|
 | `go build ./...` succeeds with zero new deps (PRD §8.7) | ✅ Pass |
 | Middleware chain overhead < 10 ms p99 (PRD §4.1) | ✅ Pass (< 10 ms per rtk call) |
-| Compression ratio ≥ 60 % on CLI output (PRD §4.1) | ✅ Pass (rtk achieves 60–90 %) |
+| Compression ratio ≥ 60% on CLI output (PRD §4.1) | ✅ Pass (rtk achieves 60–90%) |
 | Cross-platform without external deps (PRD §4.3) | ✅ Pass (rtk has pre-built binaries; fallback when missing) |
-| Conventional Commits, TDD, 45 % coverage (CI) | ✅ No impact |
+| Conventional Commits, TDD, 45% coverage (CI) | ✅ No impact |
 
 ---
 
@@ -358,7 +358,7 @@ recommended hybrid approach (subprocess middleware + Docker bundling) provides:
 - **Zero new Go dependencies** — respects the stdlib-only constraint.
 - **Established pattern** — follows the headroom integration precedent.
 - **Graceful degradation** — proxy works without rtk installed.
-- **60–90 % token savings** — rtk's proven compression on CLI output.
+- **60–90% token savings** — rtk's proven compression on CLI output.
 
 The estimated total effort is **4–6 days** for a complete integration
 including tests, Docker updates, and documentation.
