@@ -206,7 +206,7 @@ func GetToken() (Data, error) {
 // DebugLoggingEnabled returns true if debug logging is enabled.
 func DebugLoggingEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPENKIRO_DEBUG"))) {
-	case "1", "true", "yes", "on", "debug":
+	case "1", "true", "yes", "on", "debug", "verbose":
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("KIROLINK_DEBUG"))) {
@@ -239,6 +239,9 @@ func DebugLogBodySummary(label string, body []byte) {
 	}
 	sum := sha256.Sum256(body)
 	DebugLogf("%s size=%d sha256=%x", label, len(body), sum[:8])
+	if os.Getenv("OPENKIRO_DEBUG") == "verbose" {
+		DebugLogf("%s body=%s", label, string(body))
+	}
 }
 
 var (

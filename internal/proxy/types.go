@@ -91,14 +91,17 @@ type ContentBlock struct {
 // CodeWhispererRequest defines the CodeWhisperer API request structure.
 type CodeWhispererRequest struct {
 	ConversationState struct {
-		ChatTriggerType string `json:"chatTriggerType"`
-		ConversationId  string `json:"conversationId"`
-		CurrentMessage  struct {
+		ChatTriggerType     string `json:"chatTriggerType"`
+		ConversationId      string `json:"conversationId"`
+		AgentContinuationId string `json:"agentContinuationId,omitempty"`
+		AgentTaskType       string `json:"agentTaskType,omitempty"`
+		CurrentMessage      struct {
 			UserInputMessage struct {
 				Content                 string `json:"content"`
 				ModelId                 string `json:"modelId"`
 				Origin                  string `json:"origin"`
 				UserInputMessageContext struct {
+					EnvState *EnvState `json:"envState,omitempty"`
 					ToolResults []struct {
 						Content []struct {
 							Text string `json:"text"`
@@ -113,6 +116,13 @@ type CodeWhispererRequest struct {
 		History []any `json:"history"`
 	} `json:"conversationState"`
 	ProfileArn string `json:"profileArn,omitempty"`
+}
+
+// EnvState describes the client environment. Sent in userInputMessageContext.
+// kiro-cli always populates operatingSystem and currentWorkingDirectory.
+type EnvState struct {
+	OperatingSystem         string `json:"operatingSystem,omitempty"`
+	CurrentWorkingDirectory string `json:"currentWorkingDirectory,omitempty"`
 }
 
 // AnthropicResponseBlock holds a translated response content block.
@@ -133,18 +143,43 @@ type TranslatedAnthropicResponse struct {
 }
 
 const (
-	ModelSonnet46 = "CLAUDE_SONNET_4_6_V1_0"
-	ModelSonnet45 = "CLAUDE_SONNET_4_5_20250929_V1_0"
-	ModelOpus46   = "CLAUDE_OPUS_4_6_V1_0"
-	ModelHaiku45  = "CLAUDE_HAIKU_4_5_20251001_V1_0"
+	// Model IDs in the dot-notation kiro-cli uses. The Amazon Q runtime
+	// validates these strictly; underscores or kebab-case are rejected.
+	ModelSonnet46 = "claude-sonnet-4.6"
+	ModelSonnet45 = "claude-sonnet-4.5"
+	ModelOpus46   = "claude-opus-4.6"
+	ModelHaiku45  = "claude-haiku-4.5"
 
 	// Builder ID free tier models
 	ModelBuilderSonnet45 = "claude-sonnet-4.5"
 	ModelBuilderHaiku45  = "claude-haiku-4.5"
 	ModelBuilderSonnet35 = "CLAUDE_3_5_SONNET_20241022_V2_0"
 
-	// IAM Identity Center profile ARN (paid/enterprise accounts)
+	// IAM Identity Center profile ARN (paid/enterprise accounts).
+	// Used as a fallback when ListAvailableProfiles fails or no env var is set.
 	ProfileArnIAM = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
+
+	// CodeWhispererRuntimeURL is the Amazon Q endpoint for both control-plane
+	// (ListAvailableProfiles) and streaming (GenerateAssistantResponse) calls.
+	// Differentiated by the X-Amz-Target header.
+	CodeWhispererRuntimeURL = "https://q.us-east-1.amazonaws.com/"
+
+	// Coral RPC headers for the streaming runtime.
+	CoralContentType             = "application/x-amz-json-1.0"
+	CoralTargetGenerateAssistant = "AmazonCodeWhispererStreamingService.GenerateAssistantResponse"
+	CoralTargetListProfiles      = "AmazonCodeWhispererService.ListAvailableProfiles"
+
+	// KiroUserAgent identifies openkiro to the Amazon Q runtime as a kiro-cli
+	// compatible client. The "app/AmazonQ-For-CLI" suffix is what AWS uses for
+	// entitlement decisions — without it, requests get AccessDeniedException.
+	KiroUserAgent = "aws-sdk-rust/1.3.16 ua/2.1 api/codewhispererstreaming/0.1.16551 os/macos lang/rust/1.92.0 exec-env/AmazonQ-For-CLI Version/2.4.2 md/appVersion-2.4.2 app/AmazonQ-For-CLI"
+
+	// Origin sent in every UserInputMessage. KIRO_CLI is the value AWS expects
+	// for the Q-For-CLI client tier.
+	KiroOrigin = "KIRO_CLI"
+
+	// AgentTaskType used for chat-style conversations (vs "spec" for spec-mode).
+	AgentTaskTypeVibe = "vibe"
 
 	MaxToolDescLen       = 200
 	ServerReadTimeout    = 30 * time.Second

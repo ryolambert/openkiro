@@ -44,10 +44,28 @@ Default path: `~/.aws/sso/cache/kiro-auth-token.json`
 
 ## Quick start
 
-### 1. Build it
+### 1. Build and install
+
+Use the provided script — it builds, installs to `/usr/local/bin`, and handles macOS code signing automatically:
 
 ```bash
-go build -o openkiro ./cmd/openkiro
+./scripts/build-install.sh
+```
+
+> **macOS note:** macOS AppleSystemPolicy kills unsigned binaries copied to system paths. The script runs `codesign --force --sign -` after install to apply an ad-hoc signature. This is required even for locally-built binaries on macOS 13+.
+
+To install to a custom path:
+
+```bash
+INSTALL_DIR=~/bin ./scripts/build-install.sh
+```
+
+Or build manually (you'll need to codesign yourself on macOS):
+
+```bash
+make build
+sudo cp bin/openkiro /usr/local/bin/openkiro
+sudo codesign --force --sign - /usr/local/bin/openkiro  # macOS only
 ```
 
 ### 2. Set up shell aliases (recommended)

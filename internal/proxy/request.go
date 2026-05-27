@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,7 +30,19 @@ func ResolveModelID(requested string) string {
 	}
 
 	if strings.HasPrefix(key, "claude_") {
-		return strings.ToUpper(key)
+		// Legacy underscore form like CLAUDE_OPUS_4_6_V1_0 — map to closest
+		// dot-notation model. This avoids returning an uppercased string that
+		// the Amazon Q runtime would reject as INVALID_MODEL_ID.
+		switch {
+		case strings.Contains(key, "opus"):
+			return ModelOpus46
+		case strings.Contains(key, "haiku"):
+			return ModelHaiku45
+		case strings.Contains(key, "sonnet") && strings.Contains(key, "4_5"):
+			return ModelSonnet45
+		default:
+			return ModelSonnet46
+		}
 	}
 
 	switch {
@@ -529,6 +542,8 @@ func BuildCodeWhispererRequest(anthropicReq AnthropicRequest) CodeWhispererReque
 		}
 	}
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
+	cwReq.ConversationState.AgentContinuationId = GenerateUUID()
+	cwReq.ConversationState.AgentTaskType = AgentTaskTypeVibe
 
 	if anthropicReq.ConversationId != nil && *anthropicReq.ConversationId != "" {
 		cwReq.ConversationState.ConversationId = *anthropicReq.ConversationId
@@ -541,7 +556,14 @@ func BuildCodeWhispererRequest(anthropicReq AnthropicRequest) CodeWhispererReque
 
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = BuildCurrentMessageContent(anthropicReq)
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = resolvedModel
-	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR"
+	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = KiroOrigin
+
+	// envState is required by the Amazon Q runtime.
+	cwd, _ := os.Getwd()
+	cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.EnvState = &EnvState{
+		OperatingSystem:         kiroOSName(),
+		CurrentWorkingDirectory: cwd,
+	}
 
 	if len(anthropicReq.Tools) > 0 {
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools = BuildCodeWhispererTools(anthropicReq.Tools)
@@ -572,7 +594,7 @@ func BuildCodeWhispererRequest(anthropicReq AnthropicRequest) CodeWhispererReque
 		userMsg := HistoryUserMessage{}
 		userMsg.UserInputMessage.Content = content
 		userMsg.UserInputMessage.ModelId = resolvedModel
-		userMsg.UserInputMessage.Origin = "AI_EDITOR"
+		userMsg.UserInputMessage.Origin = KiroOrigin
 
 		if results := ExtractToolResults(msg.Content); len(results) > 0 {
 			userMsg.UserInputMessage.UserInputMessageContext.ToolResults = results
@@ -590,5 +612,20 @@ func debugLogf(format string, args ...any) {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPENKIRO_DEBUG"))) {
 	case "1", "true", "yes", "on", "debug":
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	}
+}
+
+// kiroOSName maps Go's runtime.GOOS to the OS strings the Amazon Q runtime
+// accepts. The runtime rejects "darwin" — it expects "macos".
+func kiroOSName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macos"
+	case "linux":
+		return "linux"
+	case "windows":
+		return "windows"
+	default:
+		return runtime.GOOS
 	}
 }

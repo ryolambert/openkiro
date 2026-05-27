@@ -134,7 +134,7 @@ func TestNewProxyHandlerRejectsOversizedRequestBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
 	recorder := httptest.NewRecorder()
 
-	NewProxyHandler().ServeHTTP(recorder, req)
+	NewProxyHandler(nil).ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected status 413 for oversized request, got %d: %s", recorder.Code, recorder.Body.String())
@@ -161,7 +161,7 @@ func TestHandlePanicHidesRecoveredValue(t *testing.T) {
 }
 
 func TestModelsEndpointDeterministic(t *testing.T) {
-	mux := NewProxyHandler()
+	mux := NewProxyHandler(nil)
 	type ModelsResponse struct {
 		Data []struct {
 			ID string `json:"id"`

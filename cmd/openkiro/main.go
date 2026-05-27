@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,6 +32,8 @@ import (
 	"syscall"
 
 	"github.com/ryolambert/openkiro/internal/daemon"
+	"github.com/ryolambert/openkiro/internal/headroom"
+	"github.com/ryolambert/openkiro/internal/middleware"
 	"github.com/ryolambert/openkiro/internal/proxy"
 	"github.com/ryolambert/openkiro/internal/sandbox"
 	"github.com/ryolambert/openkiro/internal/token"
@@ -69,7 +72,7 @@ func main() {
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		proxy.StartServer(ctx, proxy.DefaultListenAddress, port)
+		proxy.StartServer(ctx, proxy.DefaultListenAddress, port, buildMiddlewareChain(ctx))
 
 	case "start":
 		cmdStart(args[1:])
@@ -522,4 +525,33 @@ Examples:
   openkiro sandbox list
   openkiro sandbox destroy dev-session
 `, openkiroBanner)
+}
+
+// buildMiddlewareChain constructs the proxy middleware chain.
+// Headroom compression is enabled when OPENKIRO_HEADROOM=1.
+// Returns nil if no middleware is active (proxy runs passthrough).
+func buildMiddlewareChain(ctx context.Context) proxy.RequestProcessor {
+	if os.Getenv("OPENKIRO_HEADROOM") != "1" {
+		return nil
+	}
+	cfg := headroom.DefaultConfig()
+	mgr := headroom.NewManager(cfg)
+	if !mgr.Installed() {
+		log.Printf("headroom: binary not found — skipping (install with: pip install %q)", cfg.PipPackage)
+		return nil
+	}
+	if err := mgr.Start(ctx); err != nil {
+		log.Printf("headroom: failed to start proxy: %v — continuing without compression", err)
+		return nil
+	}
+	go func() {
+		<-ctx.Done()
+		if err := mgr.Stop(); err != nil {
+			log.Printf("headroom: stop error: %v", err)
+		}
+	}()
+	chain := &middleware.Chain{}
+	chain.Add(middleware.NewHeadroomMiddleware(headroom.NewClient(cfg), true))
+	log.Printf("headroom: compression middleware active on /v1/messages")
+	return chain
 }

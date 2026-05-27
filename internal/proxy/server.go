@@ -45,6 +45,21 @@ func HandlePanic(w http.ResponseWriter, recovered any) {
 	http.Error(w, `{"error":{"type":"server_error","message":"Internal server error"}}`, http.StatusInternalServerError)
 }
 
+// setKiroHeaders sets the headers required by the Amazon Q runtime to
+// identify this client as a kiro-cli compatible application. Without these,
+// the runtime returns AccessDeniedException.
+func setKiroHeaders(req *http.Request, accessToken, target string) {
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", CoralContentType)
+	req.Header.Set("X-Amz-Target", target)
+	req.Header.Set("User-Agent", KiroUserAgent)
+	req.Header.Set("x-amz-user-agent", KiroUserAgent)
+	req.Header.Set("x-amzn-codewhisperer-optout", "true")
+	req.Header.Set("amz-sdk-request", "attempt=1; max=3")
+	req.Header.Set("amz-sdk-invocation-id", GenerateUUID())
+	req.Header.Set("Accept", "*/*")
+}
+
 func logMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		startTime := time.Now()
@@ -54,8 +69,15 @@ func logMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// RequestProcessor applies middleware to an AnthropicRequest.
+// The middleware.Chain type satisfies this interface.
+type RequestProcessor interface {
+	ProcessRequest(req *AnthropicRequest) (*AnthropicRequest, error)
+}
+
 // NewProxyHandler creates the HTTP handler for the proxy.
-func NewProxyHandler() http.Handler {
+// chain may be nil, in which case requests are forwarded unmodified.
+func NewProxyHandler(chain RequestProcessor) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/v1/messages", logMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +129,17 @@ func NewProxyHandler() http.Handler {
 		}
 		if _, ok := ModelMap[strings.ToLower(strings.TrimSpace(anthropicReq.Model))]; !ok {
 			log.Printf("unknown model alias %q, using fallback %q", anthropicReq.Model, resolvedModel)
+		}
+
+		// Apply middleware chain (e.g. headroom compression) before forwarding.
+		if chain != nil {
+			processed, mwErr := chain.ProcessRequest(&anthropicReq)
+			if mwErr != nil {
+				log.Printf("middleware chain error: %v", mwErr)
+				// Non-fatal: fall through with original request.
+			} else {
+				anthropicReq = *processed
+			}
 		}
 
 		if anthropicReq.Stream {
@@ -177,7 +210,8 @@ func NewProxyHandler() http.Handler {
 }
 
 // StartServer starts the HTTP proxy server. Blocks until ctx is cancelled or a fatal error occurs.
-func StartServer(ctx context.Context, listenAddr, port string) {
+// chain may be nil, in which case requests are forwarded unmodified.
+func StartServer(ctx context.Context, listenAddr, port string, chain RequestProcessor) {
 	protocol.Debug = token.DebugLoggingEnabled()
 	if listenAddr != DefaultListenAddress {
 		log.Printf("WARNING: listening on %s — server is accessible from the network", listenAddr)
@@ -190,7 +224,7 @@ func StartServer(ctx context.Context, listenAddr, port string) {
 		_ = token.WriteCredentials(baseURL, tok.AccessToken)
 	}
 
-	server := NewHTTPServer(listenAddr, port, NewProxyHandler())
+	server := NewHTTPServer(listenAddr, port, NewProxyHandler(chain))
 
 	log.Printf("Starting Anthropic API proxy server on %s", server.Addr)
 	log.Printf("Available endpoints:")
@@ -237,6 +271,9 @@ func HandleStreamRequest(ctx context.Context, w http.ResponseWriter, anthropicRe
 	messageId := fmt.Sprintf("msg_%s", time.Now().Format("20060102150405"))
 
 	cwReq := BuildCodeWhispererRequest(anthropicReq)
+	if cwReq.ProfileArn == "" {
+		cwReq.ProfileArn = ResolveProfileArn(ctx, accessToken)
+	}
 
 	cwReqBody, err := EnsurePayloadFits(&cwReq)
 	if err != nil {
@@ -249,7 +286,7 @@ func HandleStreamRequest(ctx context.Context, w http.ResponseWriter, anthropicRe
 	proxyReq, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		"https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
+		CodeWhispererRuntimeURL,
 		bytes.NewBuffer(cwReqBody),
 	)
 	if err != nil {
@@ -257,9 +294,7 @@ func HandleStreamRequest(ctx context.Context, w http.ResponseWriter, anthropicRe
 		return
 	}
 
-	proxyReq.Header.Set("Authorization", "Bearer "+accessToken)
-	proxyReq.Header.Set("Content-Type", "application/json")
-	proxyReq.Header.Set("Accept", "text/event-stream")
+	setKiroHeaders(proxyReq, accessToken, CoralTargetGenerateAssistant)
 
 	client := token.GetStreamingUpstreamClient()
 
@@ -270,16 +305,14 @@ func HandleStreamRequest(ctx context.Context, w http.ResponseWriter, anthropicRe
 			proxyReq, err = http.NewRequestWithContext(
 				ctx,
 				http.MethodPost,
-				"https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
+				CodeWhispererRuntimeURL,
 				bytes.NewBuffer(cwReqBody),
 			)
 			if err != nil {
 				sendErrorEvent(w, flusher, "Failed to create retry request", err)
 				return
 			}
-			proxyReq.Header.Set("Authorization", "Bearer "+accessToken)
-			proxyReq.Header.Set("Content-Type", "application/json")
-			proxyReq.Header.Set("Accept", "text/event-stream")
+			setKiroHeaders(proxyReq, accessToken, CoralTargetGenerateAssistant)
 		}
 
 		resp, err = client.Do(proxyReq)
@@ -369,6 +402,9 @@ func HandleStreamRequest(ctx context.Context, w http.ResponseWriter, anthropicRe
 // HandleNonStreamRequest handles non-streaming requests.
 func HandleNonStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, accessToken string) {
 	cwReq := BuildCodeWhispererRequest(anthropicReq)
+	if cwReq.ProfileArn == "" {
+		cwReq.ProfileArn = ResolveProfileArn(context.Background(), accessToken)
+	}
 
 	cwReqBody, err := EnsurePayloadFits(&cwReq)
 	if err != nil {
@@ -381,7 +417,7 @@ func HandleNonStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest
 
 	proxyReq, err := http.NewRequest(
 		http.MethodPost,
-		"https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
+		CodeWhispererRuntimeURL,
 		bytes.NewBuffer(cwReqBody),
 	)
 	if err != nil {
@@ -390,8 +426,7 @@ func HandleNonStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest
 		return
 	}
 
-	proxyReq.Header.Set("Authorization", "Bearer "+accessToken)
-	proxyReq.Header.Set("Content-Type", "application/json")
+	setKiroHeaders(proxyReq, accessToken, CoralTargetGenerateAssistant)
 
 	client := token.GetUpstreamClient()
 
