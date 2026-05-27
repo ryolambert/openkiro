@@ -116,7 +116,7 @@ func NewProxyHandler() http.Handler {
 						log.Printf("panic in streaming handler: %v", recovered)
 					}
 				}()
-				HandleStreamRequest(w, anthropicReq, tok.AccessToken)
+				HandleStreamRequest(r.Context(), w, anthropicReq, tok.AccessToken)
 			}()
 			return
 		}
@@ -215,7 +215,7 @@ func StartServer(ctx context.Context, listenAddr, port string) {
 }
 
 // HandleStreamRequest handles streaming requests.
-func HandleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, accessToken string) {
+func HandleStreamRequest(ctx context.Context, w http.ResponseWriter, anthropicReq AnthropicRequest, accessToken string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -246,7 +246,8 @@ func HandleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, a
 
 	token.DebugLogBodySummary("codewhisperer streaming request", cwReqBody)
 
-	proxyReq, err := http.NewRequest(
+	proxyReq, err := http.NewRequestWithContext(
+		ctx,
 		http.MethodPost,
 		"https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
 		bytes.NewBuffer(cwReqBody),
@@ -260,13 +261,14 @@ func HandleStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest, a
 	proxyReq.Header.Set("Content-Type", "application/json")
 	proxyReq.Header.Set("Accept", "text/event-stream")
 
-	client := token.GetUpstreamClient()
+	client := token.GetStreamingUpstreamClient()
 
 	var resp *http.Response
 	const maxRetries = 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			proxyReq, err = http.NewRequest(
+			proxyReq, err = http.NewRequestWithContext(
+				ctx,
 				http.MethodPost,
 				"https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
 				bytes.NewBuffer(cwReqBody),

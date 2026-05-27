@@ -321,6 +321,10 @@ func ExtractToolResults(content any) []struct {
 							textBlocks = append(textBlocks, struct {
 								Text string `json:"text"`
 							}{Text: text})
+						} else if t, _ := itemMap["type"].(string); t == "image" {
+							textBlocks = append(textBlocks, struct {
+								Text string `json:"text"`
+							}{Text: "[image]"})
 						} else {
 							if data, err := json.Marshal(itemMap); err == nil {
 								textBlocks = append(textBlocks, struct {
@@ -475,6 +479,8 @@ func GetMessageContent(content any) string {
 					if query, ok := m["query"].(string); ok {
 						texts = append(texts, fmt.Sprintf("[Tool search: %s]", query))
 					}
+				case "image":
+					texts = append(texts, "[image]")
 				default:
 					if data, err := json.Marshal(m); err == nil {
 						texts = append(texts, string(data))

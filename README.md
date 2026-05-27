@@ -60,7 +60,7 @@ This installs `okcc` and `oklaude` functions into your shell config. After reloa
 
 ### 3. Make sure Kiro is already logged in
 
-This tool expects a token file at:
+This tool expects a token file at:—ª
 
 ```text
 ~/.aws/sso/cache/kiro-auth-token.json
@@ -294,7 +294,7 @@ For a concise security/performance audit, Windows compatibility answer, `kiro2cc
         <sub><b>ryolambert</b></sub>
       </a><br />
       <sub>Maintainer</sub>
-    </td> 
+    </td>
   </tr>
 </table>
 

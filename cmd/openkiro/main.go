@@ -3,9 +3,18 @@
 // Usage:
 //
 //	openkiro server [port]               - start the Anthropic API proxy (default port 1234)
+//	openkiro start [port]                - start the proxy as a background daemon
+//	openkiro stop                        - stop the background daemon
+//	openkiro status                      - show daemon status
+//	openkiro read                        - print cached Kiro token data
+//	openkiro refresh                     - refresh the Kiro token
+//	openkiro export                      - print ANTHROPIC_* env var export lines
+//	openkiro env                         - export env vars and write ~/.openkiro/credentials.json
+//	openkiro token                       - print the current access token (for alias use)
+//	openkiro alias [flags]               - generate/install shell aliases (okcc, oklaude)
+//	openkiro claude                      - configure ~/.claude.json for openkiro
 //	openkiro sandbox create [flags]      - create an agent sandbox container
 //	openkiro sandbox start   SESSION_ID  - start a created sandbox
-//	openkiro sandbox exec    SESSION_ID  - exec a command in a running sandbox
 //	openkiro sandbox stop    SESSION_ID  - stop a sandbox
 //	openkiro sandbox destroy SESSION_ID  - destroy a sandbox container
 //	openkiro sandbox list                - list all tracked sandboxes
@@ -16,12 +25,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"github.com/ryolambert/openkiro/internal/daemon"
 	"github.com/ryolambert/openkiro/internal/proxy"
 	"github.com/ryolambert/openkiro/internal/sandbox"
+	"github.com/ryolambert/openkiro/internal/token"
 )
 
 // Injected at build time via -ldflags.
@@ -52,14 +64,49 @@ func main() {
 		if len(args) > 1 {
 			port = args[1]
 		}
-		// Allow $OPENKIRO_PORT to override the default.
 		if p := os.Getenv("OPENKIRO_PORT"); p != "" {
 			port = p
 		}
-
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		proxy.StartServer(ctx, proxy.DefaultListenAddress, port)
+
+	case "start":
+		cmdStart(args[1:])
+
+	case "stop":
+		cmdStop()
+
+	case "status":
+		cmdStatus()
+
+	case "read":
+		token.ReadToken()
+
+	case "refresh":
+		token.RefreshToken()
+
+	case "export":
+		port := daemon.ParsePortFlag()
+		token.ExportEnvVars(port)
+
+	case "env":
+		cmdEnv(args[1:])
+
+	case "token":
+		// Print just the access token (used by alias functions).
+		t, err := token.GetToken()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "token: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(t.AccessToken)
+
+	case "alias":
+		cmdAlias(args[1:])
+
+	case "claude":
+		daemon.SetClaude()
 
 	case "sandbox":
 		runSandbox(args[1:])
@@ -240,14 +287,201 @@ func requireID(subcmd string, args []string) string {
 	return args[0]
 }
 
+// cmdStart starts the proxy as a background daemon process.
+func cmdStart(args []string) {
+	port := proxy.DefaultPort
+	if len(args) > 0 {
+		port = args[0]
+	}
+	if p := os.Getenv("OPENKIRO_PORT"); p != "" {
+		port = p
+	}
+
+	if err := daemon.CleanStalePID(); err != nil {
+		fmt.Fprintf(os.Stderr, "start: %v\n", err)
+	}
+
+	pid, err := daemon.ReadPID()
+	if err == nil && daemon.IsRunning(pid) {
+		fmt.Printf("openkiro already running (pid %d)\n", pid)
+		return
+	}
+
+	self, err := daemon.SelfPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start: %v\n", err)
+		os.Exit(1)
+	}
+
+	logPath, err := daemon.LogFilePath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start: %v\n", err)
+		os.Exit(1)
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start: open log: %v\n", err)
+		os.Exit(1)
+	}
+	defer logFile.Close()
+
+	//nolint:gosec // self is resolved from os.Executable, port is developer-controlled.
+	cmd := exec.Command(self, "server", port)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = daemonSysProcAttr()
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "start: %v\n", err)
+		os.Exit(1)
+	}
+	if err := daemon.WritePID(cmd.Process.Pid); err != nil {
+		fmt.Fprintf(os.Stderr, "start: write pid: %v\n", err)
+	}
+	fmt.Printf("openkiro started (pid %d, port %s, log %s)\n", cmd.Process.Pid, port, logPath)
+}
+
+// cmdStop stops the background daemon.
+func cmdStop() {
+	pid, err := daemon.ReadPID()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stop: no pid file found — is openkiro running?")
+		os.Exit(1)
+	}
+	if !daemon.IsRunning(pid) {
+		fmt.Println("openkiro is not running (stale pid file removed)")
+		_ = daemon.RemovePID()
+		return
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stop: %v\n", err)
+		os.Exit(1)
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		fmt.Fprintf(os.Stderr, "stop: %v\n", err)
+		os.Exit(1)
+	}
+	_ = daemon.RemovePID()
+	fmt.Printf("openkiro stopped (pid %d)\n", pid)
+}
+
+// cmdStatus prints whether the daemon is running.
+func cmdStatus() {
+	pid, err := daemon.ReadPID()
+	if err != nil {
+		fmt.Println("openkiro: not running")
+		return
+	}
+	if daemon.IsRunning(pid) {
+		port, _ := daemon.ResolvePort("")
+		fmt.Printf("openkiro: running (pid %d, port %s)\n", pid, port)
+	} else {
+		fmt.Println("openkiro: not running (stale pid file)")
+		_ = daemon.CleanStalePID()
+	}
+}
+
+// cmdEnv writes credentials to ~/.openkiro/credentials.json and prints export lines.
+func cmdEnv(args []string) {
+	port := daemon.ParsePortFlag()
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--port" || args[i] == "-port" {
+			port = args[i+1]
+		}
+	}
+	resolvedPort, err := daemon.ResolvePort(port)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "env: %v\n", err)
+		os.Exit(1)
+	}
+	t, err := token.GetToken()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "env: %v\n", err)
+		os.Exit(1)
+	}
+	baseURL := "http://localhost:" + resolvedPort
+	if err := token.WriteCredentials(baseURL, t.AccessToken); err != nil {
+		fmt.Fprintf(os.Stderr, "env: write credentials: %v\n", err)
+	}
+	token.ExportEnvVars(resolvedPort)
+}
+
+// cmdAlias generates or installs shell alias functions.
+func cmdAlias(args []string) {
+	shell := ""
+	port := proxy.DefaultPort
+	names := daemon.DefaultAliasNames()
+	install := false
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--shell":
+			i++
+			if i < len(args) {
+				shell = args[i]
+			}
+		case "--port":
+			i++
+			if i < len(args) {
+				port = args[i]
+			}
+		case "--name":
+			i++
+			if i < len(args) {
+				names = strings.Split(args[i], ",")
+			}
+		case "--install":
+			install = true
+		}
+	}
+
+	if shell == "" {
+		shell = daemon.DetectShell()
+	}
+
+	self, err := daemon.SelfPath()
+	if err != nil {
+		self = "openkiro"
+	}
+
+	snippet := daemon.GenerateAliases(shell, self, port, names)
+
+	if !install {
+		fmt.Println(snippet)
+		return
+	}
+
+	path, err := daemon.InstallAlias(shell, snippet)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "alias --install: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("alias installed to %s\nReload with: source %s\n", path, path)
+}
+
 func printUsage() {
 	fmt.Printf(`%s
 
 openkiro - Anthropic API proxy for Kiro/AWS CodeWhisperer
 
 Usage:
-  openkiro server [port]       Start the proxy server (default port 1234).
+  openkiro server [port]       Start the proxy server (foreground, default port 1234).
                                Overridable via $OPENKIRO_PORT.
+  openkiro start [port]        Start the proxy as a background daemon.
+  openkiro stop                Stop the background daemon.
+  openkiro status              Show daemon status.
+  openkiro read                Print cached Kiro token data.
+  openkiro refresh             Refresh the Kiro token.
+  openkiro export              Print ANTHROPIC_* env var export lines.
+  openkiro env [--port PORT]   Export env vars and write ~/.openkiro/credentials.json.
+  openkiro token               Print the current access token.
+  openkiro alias [flags]       Generate/install shell aliases (okcc, oklaude).
+    --name NAME                Alias name (default: okcc,oklaude).
+    --shell SHELL              Shell type: bash|zsh|powershell|cmd (auto-detected).
+    --port PORT                Port for generated alias (default: 1234).
+    --install                  Write alias to shell config file.
+  openkiro claude              Configure ~/.claude.json for openkiro.
   openkiro sandbox <sub-cmd>   Manage ephemeral agent sandbox containers.
   openkiro version             Print version information.
   openkiro help                Show this help message.

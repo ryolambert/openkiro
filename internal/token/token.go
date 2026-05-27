@@ -268,3 +268,27 @@ func GetUpstreamClient() *http.Client {
 	})
 	return upstreamClient
 }
+
+var (
+	streamingClientOnce sync.Once
+	streamingClient     *http.Client
+)
+
+// ResetStreamingClient clears the pooled streaming client. Test-only.
+func ResetStreamingClient() {
+	streamingClientOnce = *new(sync.Once)
+	streamingClient = nil
+}
+
+// GetStreamingUpstreamClient returns a singleton HTTP client with no timeout,
+// suitable for SSE streaming where response duration is unbounded.
+// Cancellation is handled via request context.
+func GetStreamingUpstreamClient() *http.Client {
+	streamingClientOnce.Do(func() {
+		streamingClient = &http.Client{
+			Timeout:   0, // no timeout — rely on request context
+			Transport: UpstreamTransport,
+		}
+	})
+	return streamingClient
+}

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -210,7 +211,7 @@ func TestHandleStreamRequestCharacterizationTextOnly(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	HandleStreamRequest(recorder, AnthropicRequest{
+	HandleStreamRequest(context.Background(), recorder, AnthropicRequest{
 		Model:    "mystery-model",
 		Messages: []AnthropicRequestMessage{{Role: "user", Content: "hello"}},
 		Stream:   true,
