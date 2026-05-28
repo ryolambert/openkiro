@@ -150,6 +150,7 @@ const (
 	ModelOpus48   = "claude-opus-4.8"
 	ModelOpus47   = "claude-opus-4.7"
 	ModelOpus46   = "claude-opus-4.6"
+	ModelOpus45   = "claude-opus-4.5"
 	ModelHaiku45  = "claude-haiku-4.5"
 
 	// Builder ID free tier models
@@ -211,6 +212,8 @@ var ModelMap = map[string]string{
 	"claude-opus-4-7":            ModelOpus47,
 	"claude-opus-4.7":            ModelOpus47,
 	"claude-opus-4-6":            ModelOpus46,
+	"claude-opus-4-5":            ModelOpus45,
+	"claude-opus-4-5-20251101":   ModelOpus45,
 	"claude-haiku-4-5-20251001":  ModelHaiku45,
 	"claude-3-5-sonnet-20241022": ModelSonnet46,
 	"claude-3-5-haiku-20241022":  ModelHaiku45,
