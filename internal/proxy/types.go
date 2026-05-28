@@ -147,6 +147,8 @@ const (
 	// validates these strictly; underscores or kebab-case are rejected.
 	ModelSonnet46 = "claude-sonnet-4.6"
 	ModelSonnet45 = "claude-sonnet-4.5"
+	ModelOpus48   = "claude-opus-4.8"
+	ModelOpus47   = "claude-opus-4.7"
 	ModelOpus46   = "claude-opus-4.6"
 	ModelHaiku45  = "claude-haiku-4.5"
 
@@ -204,6 +206,10 @@ var ModelMap = map[string]string{
 	"claude-sonnet-4-5":          ModelSonnet45,
 	"claude-sonnet-4-5-20250929": ModelSonnet45,
 	"claude-sonnet-4-20250514":   ModelSonnet46,
+	"claude-opus-4-8":            ModelOpus48,
+	"claude-opus-4.8":            ModelOpus48,
+	"claude-opus-4-7":            ModelOpus47,
+	"claude-opus-4.7":            ModelOpus47,
 	"claude-opus-4-6":            ModelOpus46,
 	"claude-haiku-4-5-20251001":  ModelHaiku45,
 	"claude-3-5-sonnet-20241022": ModelSonnet46,
@@ -212,5 +218,5 @@ var ModelMap = map[string]string{
 	"claude-3-7-haiku-20250219":  ModelHaiku45,
 	"claude-4-sonnet":            ModelSonnet46,
 	"claude-4-haiku":             ModelHaiku45,
-	"claude-4-opus":              ModelOpus46,
+	"claude-4-opus":              ModelOpus48,
 }
