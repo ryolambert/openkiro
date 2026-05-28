@@ -201,19 +201,23 @@ var MaxRequestBodyBytes int64 = 200 << 20
 var MaxPayloadBytes = 250000000
 
 // ModelMap maps Anthropic model aliases to CodeWhisperer model IDs.
+// Keys are the Anthropic-facing IDs returned by /v1/models and accepted in requests.
+// Values are the dot-notation IDs the Amazon Q runtime validates.
+//
+// claude-opus-4-8 is not yet available on the KiroDefault profile; requests
+// for it are silently downgraded to claude-opus-4-7 (same 1M context, same pricing).
 var ModelMap = map[string]string{
-	"default":                    ModelSonnet45,
+	"default":                    ModelSonnet46,
 	"claude-sonnet-4-6":          ModelSonnet46,
 	"claude-sonnet-4-5":          ModelSonnet45,
 	"claude-sonnet-4-5-20250929": ModelSonnet45,
 	"claude-sonnet-4-20250514":   ModelSonnet46,
-	"claude-opus-4-8":            ModelOpus48,
-	"claude-opus-4.8":            ModelOpus48,
+	"claude-opus-4-8":            ModelOpus47, // 4.8 not available on KiroDefault; downgrade to 4.7
 	"claude-opus-4-7":            ModelOpus47,
-	"claude-opus-4.7":            ModelOpus47,
 	"claude-opus-4-6":            ModelOpus46,
 	"claude-opus-4-5":            ModelOpus45,
 	"claude-opus-4-5-20251101":   ModelOpus45,
+	"claude-haiku-4-5":           ModelHaiku45,
 	"claude-haiku-4-5-20251001":  ModelHaiku45,
 	"claude-3-5-sonnet-20241022": ModelSonnet46,
 	"claude-3-5-haiku-20241022":  ModelHaiku45,
@@ -221,5 +225,5 @@ var ModelMap = map[string]string{
 	"claude-3-7-haiku-20250219":  ModelHaiku45,
 	"claude-4-sonnet":            ModelSonnet46,
 	"claude-4-haiku":             ModelHaiku45,
-	"claude-4-opus":              ModelOpus48,
+	"claude-4-opus":              ModelOpus47,
 }

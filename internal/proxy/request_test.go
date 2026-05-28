@@ -15,6 +15,10 @@ func TestResolveModelIDCharacterization(t *testing.T) {
 		"claude_opus_4_6_v1_0":        ModelOpus46,
 		"Acme Sonnet 4.5 Preview":     ModelSonnet45,
 		"totally-unknown-model-alias": ModelSonnet46,
+		// 4.8 not available on KiroDefault profile — downgraded to 4.7
+		"claude-opus-4-8":  ModelOpus47,
+		"claude-opus-4.8":  ModelOpus47,
+		"claude-4-opus":    ModelOpus47,
 	}
 
 	for input, want := range tests {

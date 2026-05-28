@@ -35,13 +35,13 @@ func ResolveModelID(requested string) string {
 		// the Amazon Q runtime would reject as INVALID_MODEL_ID.
 		switch {
 		case strings.Contains(key, "opus") && strings.Contains(key, "4_8"):
-			return ModelOpus48
+			return ModelOpus47 // 4.8 not available on KiroDefault; downgrade to 4.7
 		case strings.Contains(key, "opus") && strings.Contains(key, "4_7"):
 			return ModelOpus47
 		case strings.Contains(key, "opus") && strings.Contains(key, "4_6"):
 			return ModelOpus46
 		case strings.Contains(key, "opus"):
-			return ModelOpus48
+			return ModelOpus47 // 4.8 not available on KiroDefault; downgrade to 4.7
 		case strings.Contains(key, "haiku"):
 			return ModelHaiku45
 		case strings.Contains(key, "sonnet") && strings.Contains(key, "4_5"):
@@ -63,9 +63,9 @@ func ResolveModelID(requested string) string {
 	case strings.Contains(key, "opus") && (strings.Contains(key, "4-7") || strings.Contains(key, "4.7")):
 		return ModelOpus47
 	case strings.Contains(key, "opus") && (strings.Contains(key, "4-8") || strings.Contains(key, "4.8")):
-		return ModelOpus48
+		return ModelOpus47 // 4.8 not available on KiroDefault; downgrade to 4.7
 	case strings.Contains(key, "opus"):
-		return ModelOpus48
+		return ModelOpus47 // default opus → best available
 	case strings.Contains(key, "haiku"):
 		return ModelHaiku45
 	default:
