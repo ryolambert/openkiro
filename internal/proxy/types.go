@@ -101,7 +101,7 @@ type CodeWhispererRequest struct {
 				ModelId                 string `json:"modelId"`
 				Origin                  string `json:"origin"`
 				UserInputMessageContext struct {
-					EnvState *EnvState `json:"envState,omitempty"`
+					EnvState    *EnvState `json:"envState,omitempty"`
 					ToolResults []struct {
 						Content []struct {
 							Text string `json:"text"`
@@ -145,6 +145,8 @@ type TranslatedAnthropicResponse struct {
 const (
 	// Model IDs in the dot-notation kiro-cli uses. The Amazon Q runtime
 	// validates these strictly; underscores or kebab-case are rejected.
+	ModelSonnet5  = "claude-sonnet-5"
+	ModelOpus5    = "claude-opus-5"
 	ModelSonnet46 = "claude-sonnet-4.6"
 	ModelSonnet45 = "claude-sonnet-4.5"
 	ModelOpus48   = "claude-opus-4.8"
@@ -203,16 +205,15 @@ var MaxPayloadBytes = 250000000
 // ModelMap maps Anthropic model aliases to CodeWhisperer model IDs.
 // Keys are the Anthropic-facing IDs returned by /v1/models and accepted in requests.
 // Values are the dot-notation IDs the Amazon Q runtime validates.
-//
-// claude-opus-4-8 is not yet available on the KiroDefault profile; requests
-// for it are silently downgraded to claude-opus-4-7 (same 1M context, same pricing).
 var ModelMap = map[string]string{
 	"default":                    ModelSonnet46,
+	"claude-sonnet-5":            ModelSonnet5,
+	"claude-opus-5":              ModelOpus5,
 	"claude-sonnet-4-6":          ModelSonnet46,
 	"claude-sonnet-4-5":          ModelSonnet45,
 	"claude-sonnet-4-5-20250929": ModelSonnet45,
 	"claude-sonnet-4-20250514":   ModelSonnet46,
-	"claude-opus-4-8":            ModelOpus47, // 4.8 not available on KiroDefault; downgrade to 4.7
+	"claude-opus-4-8":            ModelOpus48,
 	"claude-opus-4-7":            ModelOpus47,
 	"claude-opus-4-6":            ModelOpus46,
 	"claude-opus-4-5":            ModelOpus45,
@@ -225,5 +226,5 @@ var ModelMap = map[string]string{
 	"claude-3-7-haiku-20250219":  ModelHaiku45,
 	"claude-4-sonnet":            ModelSonnet46,
 	"claude-4-haiku":             ModelHaiku45,
-	"claude-4-opus":              ModelOpus47,
+	"claude-4-opus":              ModelOpus48,
 }

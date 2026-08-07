@@ -274,6 +274,7 @@ func HandleStreamRequest(ctx context.Context, w http.ResponseWriter, anthropicRe
 	if cwReq.ProfileArn == "" {
 		cwReq.ProfileArn = ResolveProfileArn(ctx, accessToken)
 	}
+	ApplyProfileModelFallback(&cwReq)
 
 	cwReqBody, err := EnsurePayloadFits(&cwReq)
 	if err != nil {
@@ -405,6 +406,7 @@ func HandleNonStreamRequest(w http.ResponseWriter, anthropicReq AnthropicRequest
 	if cwReq.ProfileArn == "" {
 		cwReq.ProfileArn = ResolveProfileArn(context.Background(), accessToken)
 	}
+	ApplyProfileModelFallback(&cwReq)
 
 	cwReqBody, err := EnsurePayloadFits(&cwReq)
 	if err != nil {

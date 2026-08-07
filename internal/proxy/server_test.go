@@ -188,6 +188,11 @@ func TestModelsEndpointDeterministic(t *testing.T) {
 			if !sort.StringsAreSorted(ids) {
 				t.Fatalf("model IDs not sorted: %v", ids)
 			}
+			for _, want := range []string{"claude-opus-5", "claude-sonnet-5"} {
+				if j := sort.SearchStrings(ids, want); j == len(ids) || ids[j] != want {
+					t.Fatalf("model IDs missing %q: %v", want, ids)
+				}
+			}
 		} else if len(ids) != len(firstIDs) {
 			t.Fatalf("iteration %d: got %d models, want %d", i, len(ids), len(firstIDs))
 		} else {

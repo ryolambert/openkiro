@@ -35,13 +35,13 @@ func ResolveModelID(requested string) string {
 		// the Amazon Q runtime would reject as INVALID_MODEL_ID.
 		switch {
 		case strings.Contains(key, "opus") && strings.Contains(key, "4_8"):
-			return ModelOpus47 // 4.8 not available on KiroDefault; downgrade to 4.7
+			return ModelOpus48
 		case strings.Contains(key, "opus") && strings.Contains(key, "4_7"):
 			return ModelOpus47
 		case strings.Contains(key, "opus") && strings.Contains(key, "4_6"):
 			return ModelOpus46
 		case strings.Contains(key, "opus"):
-			return ModelOpus47 // 4.8 not available on KiroDefault; downgrade to 4.7
+			return ModelOpus48 // default opus → best available
 		case strings.Contains(key, "haiku"):
 			return ModelHaiku45
 		case strings.Contains(key, "sonnet") && strings.Contains(key, "4_5"):
@@ -63,9 +63,9 @@ func ResolveModelID(requested string) string {
 	case strings.Contains(key, "opus") && (strings.Contains(key, "4-7") || strings.Contains(key, "4.7")):
 		return ModelOpus47
 	case strings.Contains(key, "opus") && (strings.Contains(key, "4-8") || strings.Contains(key, "4.8")):
-		return ModelOpus47 // 4.8 not available on KiroDefault; downgrade to 4.7
+		return ModelOpus48
 	case strings.Contains(key, "opus"):
-		return ModelOpus47 // default opus → best available
+		return ModelOpus48 // default opus → best available
 	case strings.Contains(key, "haiku"):
 		return ModelHaiku45
 	default:
@@ -535,6 +535,22 @@ func GetProfileArn() string {
 	return ""
 }
 
+// ApplyProfileModelFallback switches profile-only models to Builder IDs when
+// profile discovery did not produce a usable profile ARN.
+func ApplyProfileModelFallback(cwReq *CodeWhispererRequest) {
+	if cwReq.ProfileArn != "" {
+		return
+	}
+
+	modelID := &cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId
+	switch *modelID {
+	case ModelSonnet5, ModelOpus5, ModelSonnet46, ModelSonnet45, ModelOpus46:
+		*modelID = ModelBuilderSonnet45
+	case ModelHaiku45:
+		*modelID = ModelBuilderHaiku45
+	}
+}
+
 // BuildCodeWhispererRequest builds a CodeWhisperer request from an Anthropic request.
 func BuildCodeWhispererRequest(anthropicReq AnthropicRequest) CodeWhispererRequest {
 	profileArn := GetProfileArn()
@@ -543,14 +559,6 @@ func BuildCodeWhispererRequest(anthropicReq AnthropicRequest) CodeWhispererReque
 	}
 
 	resolvedModel := ResolveModelID(anthropicReq.Model)
-	if profileArn == "" {
-		switch resolvedModel {
-		case ModelSonnet46, ModelSonnet45, ModelOpus46:
-			resolvedModel = ModelBuilderSonnet45
-		case ModelHaiku45:
-			resolvedModel = ModelBuilderHaiku45
-		}
-	}
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.AgentContinuationId = GenerateUUID()
 	cwReq.ConversationState.AgentTaskType = AgentTaskTypeVibe

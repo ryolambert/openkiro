@@ -12,13 +12,15 @@ import (
 func TestResolveModelIDCharacterization(t *testing.T) {
 	tests := map[string]string{
 		"claude-4-sonnet":             ModelSonnet46,
+		"claude-sonnet-5":             ModelSonnet5,
+		"claude-opus-5":               ModelOpus5,
 		"claude_opus_4_6_v1_0":        ModelOpus46,
 		"Acme Sonnet 4.5 Preview":     ModelSonnet45,
+		"default":                     ModelSonnet46,
 		"totally-unknown-model-alias": ModelSonnet46,
-		// 4.8 not available on KiroDefault profile — downgraded to 4.7
-		"claude-opus-4-8":  ModelOpus47,
-		"claude-opus-4.8":  ModelOpus47,
-		"claude-4-opus":    ModelOpus47,
+		"claude-opus-4-8":             ModelOpus48,
+		"claude-opus-4.8":             ModelOpus48,
+		"claude-4-opus":               ModelOpus48,
 	}
 
 	for input, want := range tests {
@@ -105,8 +107,8 @@ func TestBuildCodeWhispererRequestCharacterizationPreservesCallerContext(t *test
 	cwReq := BuildCodeWhispererRequest(req)
 	current := cwReq.ConversationState.CurrentMessage.UserInputMessage
 
-	if current.ModelId != ModelBuilderSonnet45 {
-		t.Fatalf("expected fallback model %q, got %q", ModelBuilderSonnet45, current.ModelId)
+	if current.ModelId != ModelSonnet46 {
+		t.Fatalf("expected unresolved profile to preserve model %q, got %q", ModelSonnet46, current.ModelId)
 	}
 	if !strings.Contains(current.Content, req.System[0].Text) {
 		t.Fatalf("expected current content to include system context, got %q", current.Content)
@@ -136,6 +138,46 @@ func TestBuildCodeWhispererRequestCharacterizationPreservesCallerContext(t *test
 		if userMsg, ok := entry.(HistoryUserMessage); ok && strings.Contains(userMsg.UserInputMessage.Content, "identity") {
 			t.Fatalf("did not expect synthetic identity history, got %#v", history)
 		}
+	}
+}
+
+func TestApplyProfileModelFallback_profileAvailablePreservesRequestedModel(t *testing.T) {
+	tests := map[string]string{
+		"claude-sonnet-5": ModelSonnet5,
+		"claude-opus-5":   ModelOpus5,
+	}
+
+	for model, want := range tests {
+		t.Run(model, func(t *testing.T) {
+			req := BuildCodeWhispererRequest(AnthropicRequest{
+				Model:    model,
+				Messages: []AnthropicRequestMessage{{Role: "user", Content: "test"}},
+			})
+			req.ProfileArn = "arn:aws:codewhisperer:us-east-1:123456789012:profile/test"
+
+			ApplyProfileModelFallback(&req)
+
+			if got := req.ConversationState.CurrentMessage.UserInputMessage.ModelId; got != want {
+				t.Fatalf("expected profile model %q, got %q", want, got)
+			}
+		})
+	}
+}
+
+func TestApplyProfileModelFallback_missingProfileUsesBuilderModel(t *testing.T) {
+	for _, model := range []string{"claude-sonnet-5", "claude-opus-5"} {
+		t.Run(model, func(t *testing.T) {
+			req := BuildCodeWhispererRequest(AnthropicRequest{
+				Model:    model,
+				Messages: []AnthropicRequestMessage{{Role: "user", Content: "test"}},
+			})
+
+			ApplyProfileModelFallback(&req)
+
+			if got := req.ConversationState.CurrentMessage.UserInputMessage.ModelId; got != ModelBuilderSonnet45 {
+				t.Fatalf("expected builder fallback model %q, got %q", ModelBuilderSonnet45, got)
+			}
+		})
 	}
 }
 

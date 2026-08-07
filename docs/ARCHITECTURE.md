@@ -295,23 +295,34 @@ token.DebugLogBodySummary(label, body)     // log body size + first N chars
 
 ### Resolution Strategy
 
-1. **Exact match** — look up in `ModelMap` (case-insensitive, including the literal alias `"default"` → `ModelSonnet45`)
-2. **Passthrough** — if prefixed with `claude_` (uppercase), pass as-is
-3. **Fuzzy match** — keyword-based fallback:
-   - Contains "sonnet" + "4-5" or "4.5" → `ModelSonnet45`
-   - Contains "sonnet" → `ModelSonnet46`
-   - Contains "opus" → `ModelOpus46`
-   - Contains "haiku" → `ModelHaiku45`
-4. **Empty/unknown** — when `requested` is `""` or no rule above matches, `ResolveModelID` falls back to `ModelSonnet46`
+1. **Case-insensitive exact match** — lowercase the request and look it up in `ModelMap`. This includes `"default"` → `ModelSonnet46` and the exact aliases `"claude-sonnet-5"` → `ModelSonnet5` and `"claude-opus-5"` → `ModelOpus5`.
+2. **Legacy underscore normalization** — names beginning with `claude_` are converted to the closest supported runtime model instead of being passed through:
+   - Opus 4.8, 4.7, and 4.6 underscore forms → `ModelOpus48`, `ModelOpus47`, and `ModelOpus46`, respectively
+   - Other Opus underscore forms → `ModelOpus48`
+   - Sonnet 4.5 underscore forms → `ModelSonnet45`; other Sonnet underscore forms → `ModelSonnet46`
+   - Haiku underscore forms → `ModelHaiku45`
+3. **Fuzzy 4.x match** — keyword-based fallback:
+   - Sonnet 4.5 (`"4-5"` or `"4.5"`) → `ModelSonnet45`; other Sonnet names → `ModelSonnet46`
+   - Opus 4.7 (`"4-7"` or `"4.7"`) → `ModelOpus47`
+   - Opus 4.8 (`"4-8"` or `"4.8"`) and other Opus names → `ModelOpus48`
+   - Haiku names → `ModelHaiku45`
+4. **Empty/unknown** — `ModelSonnet46`
+
+The 5-series names are exact aliases only; the resolver does not claim dated aliases or fuzzy 5.x spellings.
 
 ### Current Model Constants
 
-| Constant | CodeWhisperer ID |
-|----------|-----------------|
-| `ModelSonnet46` | `CLAUDE_SONNET_4_6_V1_0` |
-| `ModelSonnet45` | `CLAUDE_SONNET_4_5_20250929_V1_0` |
-| `ModelOpus46` | `CLAUDE_OPUS_4_6_V1_0` |
-| `ModelHaiku45` | `CLAUDE_HAIKU_4_5_20251001_V1_0` |
+| Constant | CodeWhisperer runtime ID |
+|----------|---------------------------|
+| `ModelSonnet5` | `claude-sonnet-5` |
+| `ModelOpus5` | `claude-opus-5` |
+| `ModelSonnet46` | `claude-sonnet-4.6` |
+| `ModelSonnet45` | `claude-sonnet-4.5` |
+| `ModelOpus48` | `claude-opus-4.8` |
+| `ModelOpus47` | `claude-opus-4.7` |
+| `ModelOpus46` | `claude-opus-4.6` |
+| `ModelOpus45` | `claude-opus-4.5` |
+| `ModelHaiku45` | `claude-haiku-4.5` |
 
 ---
 
